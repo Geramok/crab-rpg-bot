@@ -5,7 +5,11 @@
 """
 import random
 
-from data import CRABS, MUTATION_SLOTS, STONE_COLORS, STONE_LEVEL_BONUS, STONE_LEVEL_CHANCE
+from data import (
+    CRABS, MUTATION_SLOT_BASE_COST, MUTATION_VARIANTS,
+    STONE_COLORS, STONE_LEVEL_BONUS, STONE_LEVEL_CHANCE,
+    MYTHIC_EVENT_UNLOCK_MOLTS, MYTHIC_EVENT_UNLOCK_MAX_METERS, MYTHIC_EVENT_UNLOCK_KILLS,
+)
 
 MOLT_BASE_LEVEL = 70          # уровень, нужный для 1-й линьки
 MOLT_LEVEL_STEP = 15          # на сколько растёт требование с каждой следующей линькой
@@ -26,23 +30,38 @@ def level_up_cost(current_level, molts):
 
 
 def dna_points_for_molt(molts, crab_level):
-    """Сколько очков ДНК даёт линька. База растёт с числом линек, а дополнительный
-    бонус начисляется за каждый уровень СВЕРХ минимально требуемого — специально,
-    чтобы имело смысл забираться выше требуемого уровня, а не линять впритык."""
+    """Сколько очков ДНК даёт линька. База растёт ЭКСПОНЕНЦИАЛЬНО вместе с
+    числом линек (чтобы поспевать за тем, как дорожают мутации — см.
+    mutation_cost), а дополнительный бонус начисляется за каждый уровень
+    СВЕРХ минимально требуемого — специально, чтобы имело смысл забираться
+    выше требуемого уровня, а не линять впритык."""
     required = molt_required_level(molts)
-    base = 10 + molts * 5
+    base = 14 * (1.45 ** molts)
     over_levels = max(0, crab_level - required)
-    bonus = round(over_levels * 0.4)
-    return base + bonus
+    bonus = over_levels * 1.0
+    return round(base + bonus)
 
 
 def mutation_cost(slot, target_level, total_levels_owned):
-    """Цена повышения мутации slot до уровня target_level.
+    """Цена повышения мутации slot до уровня target_level (первая покупка = выпадение
+    случайного артефакта, дальнейшие = его прокачка).
     total_levels_owned — суммарный уровень ВСЕХ мутаций игрока (до этой покупки),
     из-за чего каждая следующая покупка/апгрейд дороже предыдущей."""
-    base = MUTATION_SLOTS[slot]["base_cost"]
-    cost = base * (target_level ** 1.6) * (1 + total_levels_owned * 0.22)
+    base = MUTATION_SLOT_BASE_COST[slot]
+    cost = base * (target_level ** 1.35) * (1 + total_levels_owned * 0.10)
     return max(1, round(cost))
+
+
+def roll_mutation_variant(slot):
+    """Случайно выбирает артефакт для слота при первой покупке мутации."""
+    return random.choice(MUTATION_VARIANTS[slot])
+
+
+def get_mutation_variant(slot, variant_key):
+    for v in MUTATION_VARIANTS[slot]:
+        if v["key"] == variant_key:
+            return v
+    return None
 
 
 def next_monster_meters(current_meters):
@@ -77,59 +96,44 @@ def roll_dig_loot():
     return loot
 
 
-def get_effective_stats(user, stones):
-    """Характеристики краба: базовые от вида краба + уровень + добытые камни.
-    Обычные мутации (ноги/панцирь/клешни) СЮДА не входят — это не прибавка к
-    характеристикам, а отдельные пассивные способности, см. get_mutation_abilities()."""
+def get_effective_stats(user, stones, mutations=None):
+    """Характеристики краба: базовые от вида краба + уровень + камни + надетые
+    мутации-артефакты (у каждой — один плюс и один минус к характеристике)."""
     crab_base = CRABS[user["crab_type"]]
-    damage = float(crab_base["damage"])
-    evasion = float(crab_base["evasion"])
-    luck = float(crab_base["luck"])
-    crit_chance = float(crab_base["crit_chance"])
-    crit_damage = float(crab_base["crit_damage"])
-    max_hp = float(crab_base["max_hp"])
+    stats = {
+        "damage": float(crab_base["damage"]),
+        "evasion": float(crab_base["evasion"]),
+        "luck": float(crab_base["luck"]),
+        "crit_chance": float(crab_base["crit_chance"]),
+        "crit_damage": float(crab_base["crit_damage"]),
+        "max_hp": float(crab_base["max_hp"]),
+    }
 
-    damage += user["crab_level"] * 1.4
-    max_hp += user["crab_level"] * 4.5
+    stats["damage"] += user["crab_level"] * 1.4
+    stats["max_hp"] += user["crab_level"] * 4.5
 
     for st in stones:
         effect = STONE_COLORS[st["color"]]["effect"]
         bonus = STONE_LEVEL_BONUS[st["level"]] * st["count"]
-        if effect == "damage":
-            damage += bonus
-        elif effect == "evasion":
-            evasion += bonus
-        elif effect == "luck":
-            luck += bonus
-        elif effect == "crit_chance":
-            crit_chance += bonus
-        elif effect == "crit_damage":
-            crit_damage += bonus
+        stats[effect] += bonus
 
-    evasion = min(evasion, 75.0)
-    crit_chance = min(crit_chance, 90.0)
+    if mutations:
+        for slot, m in mutations.items():
+            if not (m and m.get("equipped") and m.get("level", 0) > 0 and m.get("variant_key")):
+                continue
+            variant = get_mutation_variant(slot, m["variant_key"])
+            if not variant:
+                continue
+            level = m["level"]
+            stats[variant["buff_stat"]] += variant["buff_per_level"] * level
+            stats[variant["debuff_stat"]] -= variant["debuff_per_level"] * level
 
-    return {
-        "damage": damage,
-        "evasion": evasion,
-        "luck": luck,
-        "crit_chance": crit_chance,
-        "crit_damage": crit_damage,
-        "max_hp": round(max_hp),
-    }
+    stats["evasion"] = max(0.0, min(stats["evasion"], 75.0))
+    stats["crit_chance"] = max(0.0, min(stats["crit_chance"], 90.0))
+    stats["damage"] = max(1.0, stats["damage"])
+    stats["max_hp"] = max(10, round(stats["max_hp"]))
 
-
-def get_mutation_abilities(mutations):
-    """Возвращает силу пассивных навыков от НАДЕТЫХ обычных мутаций.
-    dash_chance — шанс двойного удара (ноги), regen_percent — % лечения после
-    победы (панцирь), rend_chance — шанс бонусного удара клешнёй (клешни)."""
-    abilities = {"dash_chance": 0.0, "regen_percent": 0.0, "rend_chance": 0.0}
-    key_by_slot = {"legs": "dash_chance", "shell": "regen_percent", "claws": "rend_chance"}
-    for slot, m in mutations.items():
-        if m and m.get("equipped") and m.get("level", 0) > 0:
-            per_level = MUTATION_SLOTS[slot]["per_level"]
-            abilities[key_by_slot[slot]] = per_level * m["level"]
-    return abilities
+    return stats
 
 
 def player_attack(stats, force_crit=False):
@@ -172,3 +176,38 @@ def weighted_sample_without_replacement(items, weights, k):
                 pool.pop(i)
                 break
     return result
+
+
+# ---------------- Магазин: награда в процентах от текущего прогресса ----------------
+
+def shop_gold_reward(user, levels_worth):
+    """Золото = стоимость levels_worth уровней прокачки НА ТЕКУЩЕМ этапе игры.
+    Так покупка одинаково полезна и в начале, и на 100-м уровне, и её нельзя
+    абузить, скупая дёшево на старте — ранняя стоимость уровня сама по себе мала."""
+    cost = level_up_cost(user["crab_level"], user["molts"])
+    return max(50, round(cost * levels_worth))
+
+
+def shop_dna_reward(mutations, upgrades_worth):
+    """Очки ДНК = средняя стоимость upgrades_worth апгрейдов мутаций на текущем
+    этапе (учитывает суммарный уровень уже купленных мутаций)."""
+    total_levels = sum(m.get("level", 0) for m in mutations.values()) if mutations else 0
+    costs = []
+    for slot in MUTATION_SLOT_BASE_COST:
+        cur_level = mutations.get(slot, {}).get("level", 0) if mutations else 0
+        costs.append(mutation_cost(slot, cur_level + 1, total_levels))
+    avg_cost = sum(costs) / len(costs)
+    return max(5, round(avg_cost * upgrades_worth))
+
+
+# ---------------- Открытие мифических ивентов ----------------
+
+def mythic_events_unlocked(user):
+    """Несколько альтернативных путей открытия ивентов — не только линьки,
+    но и большой пройденный путь или много убийств, чтобы не запирать контент
+    только за самым медленным способом прогрессии."""
+    return (
+        user["molts"] >= MYTHIC_EVENT_UNLOCK_MOLTS
+        or user["max_meters"] >= MYTHIC_EVENT_UNLOCK_MAX_METERS
+        or user["kills"] >= MYTHIC_EVENT_UNLOCK_KILLS
+    )

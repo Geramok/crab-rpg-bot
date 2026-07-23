@@ -9,7 +9,7 @@ from aiogram.fsm.context import FSMContext
 import database
 from data import SPECIAL_MUTATIONS
 from game_logic import (
-    get_effective_stats, get_mutation_abilities, next_monster_meters, monster_stats,
+    get_effective_stats, next_monster_meters, monster_stats,
     player_attack, monster_attack, gold_reward,
 )
 from keyboards import hunt_kb
@@ -27,7 +27,8 @@ def _equipped_specials(user_id):
 async def search_enemy(message: Message, state: FSMContext):
     user = database.get_user(message.from_user.id)
     stones = database.get_stones(message.from_user.id)
-    stats = get_effective_stats(user, stones)
+    mutations = database.get_mutations(message.from_user.id)
+    stats = get_effective_stats(user, stones, mutations)
 
     if user["in_hunt"]:
         await message.answer("Ты уже сражаешься! Атакуй или отступи.", reply_markup=hunt_kb(True))
@@ -64,15 +65,15 @@ async def attack(message: Message, state: FSMContext):
 
     stones = database.get_stones(message.from_user.id)
     mutations = database.get_mutations(message.from_user.id)
-    stats = get_effective_stats(user, stones)
-    abilities = get_mutation_abilities(mutations)
+    stats = get_effective_stats(user, stones, mutations)
     specials = _equipped_specials(message.from_user.id)
-    monster = json.loads(user["monster_json"])
+    original_monster_json = user["monster_json"]
+    monster = json.loads(original_monster_json)
     monster.setdefault("poison_turns", 0)
     monster.setdefault("poison_dmg", 0)
 
     log = []
-    cur_hp = user["cur_hp"]  # локально отслеживаем прочность в течение всего тапа (вампиризм лечит сразу)
+    cur_hp = user["cur_hp"]  # локально отслеживаем прочность в течение тапа (вампиризм лечит сразу)
 
     # ☠️ Яд — тикает в начале каждого нового тапа, если наложен
     if monster["poison_turns"] > 0:
@@ -105,16 +106,6 @@ async def attack(message: Message, state: FSMContext):
         log.append("🗡️ Прокол сработал — гарантированный крит!")
     was_crit = do_hit(force_crit=force_crit)
 
-    # 🦵 Рывок — шанс ударить второй раз за тот же тап
-    if monster["hp"] > 0 and random.random() * 100 < abilities["dash_chance"]:
-        log.append("🦵 Рывок! Дополнительный удар:")
-        was_crit = do_hit() or was_crit
-
-    # ✂️ Хватка — шанс на бонусный мощный удар клешнёй
-    if monster["hp"] > 0 and random.random() * 100 < abilities["rend_chance"]:
-        log.append("✂️ Хватка сработала! Мощный удар клешнёй:")
-        was_crit = do_hit() or was_crit
-
     # 🌀 Бешенство — после крита шанс на ещё один мгновенный удар
     if monster["hp"] > 0 and was_crit and "frenzy" in specials and random.random() * 100 < SPECIAL_MUTATIONS["frenzy"]["chance"]:
         log.append("🌀 Бешенство! Ещё один удар:")
@@ -128,16 +119,9 @@ async def attack(message: Message, state: FSMContext):
 
         new_max_meters = max(user["max_meters"], user["cur_meters"])
 
-        # 🛡️ Регенерация — восстановление прочности после победы
-        if abilities["regen_percent"] > 0:
-            missing = stats["max_hp"] - cur_hp
-            heal = round(missing * abilities["regen_percent"] / 100)
-            if heal > 0:
-                cur_hp = min(stats["max_hp"], cur_hp + heal)
-                log.append(f"🛡️ Регенерация восстановила {heal} прочности.")
-
-        database.update_user(
+        applied = database.try_apply_attack_result(
             message.from_user.id,
+            original_monster_json,
             in_hunt=0,
             monster_json=None,
             gold=user["gold"] + gold,
@@ -146,6 +130,9 @@ async def attack(message: Message, state: FSMContext):
             total_earned_gold=user["total_earned_gold"] + gold,
             cur_hp=cur_hp,
         )
+        if not applied:
+            await message.answer("Слишком быстро — состояние боя уже изменилось, посмотри актуальный статус.", reply_markup=hunt_kb(False))
+            return
         log.append(f"🏆 Враг повержен! Получено золота: {gold} 💰")
         await message.answer("\n".join(log), reply_markup=hunt_kb(False))
         return
@@ -168,22 +155,30 @@ async def attack(message: Message, state: FSMContext):
         log.append(f"Враг бьёт тебя на {mdmg}. Твоя прочность: {max(new_hp, 0)}/{stats['max_hp']}")
 
     if new_hp <= 0:
-        database.update_user(
+        applied = database.try_apply_attack_result(
             message.from_user.id,
+            original_monster_json,
             in_hunt=0,
             monster_json=None,
             cur_hp=0,
             cur_meters=0,
         )
+        if not applied:
+            await message.answer("Слишком быстро — состояние боя уже изменилось, посмотри актуальный статус.", reply_markup=hunt_kb(False))
+            return
         log.append("💔 Твой панцирь не выдержал! Ты отступаешь на берег зализывать раны...")
         await message.answer("\n".join(log), reply_markup=hunt_kb(False))
         return
 
-    database.update_user(
+    applied = database.try_apply_attack_result(
         message.from_user.id,
+        original_monster_json,
         cur_hp=new_hp,
         monster_json=json.dumps(monster),
     )
+    if not applied:
+        await message.answer("Слишком быстро — состояние боя уже изменилось, посмотри актуальный статус.", reply_markup=hunt_kb(True))
+        return
     await message.answer("\n".join(log), reply_markup=hunt_kb(True))
 
 

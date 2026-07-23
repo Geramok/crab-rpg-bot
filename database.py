@@ -56,9 +56,15 @@ def init_db():
             slot TEXT,
             level INTEGER DEFAULT 0,
             equipped INTEGER DEFAULT 0,
+            variant_key TEXT,
             PRIMARY KEY (user_id, slot)
         )
         """)
+        # Миграция для уже существующих БД, созданных до появления вариантов-артефактов
+        try:
+            conn.execute("ALTER TABLE mutations ADD COLUMN variant_key TEXT")
+        except sqlite3.OperationalError:
+            pass  # колонка уже есть
         conn.execute("""
         CREATE TABLE IF NOT EXISTS special_mutations (
             user_id INTEGER,
@@ -121,6 +127,55 @@ def update_user(user_id, **fields):
         conn.execute(f"UPDATE users SET {keys} WHERE user_id=?", values)
 
 
+def try_spend(user_id, field, amount):
+    """Атомарно списывает amount из поля field, ТОЛЬКО если средств хватает.
+    Возвращает True при успехе. Защищает от гонки: если два быстрых клика
+    (двойной тап) прилетят почти одновременно, второй просто не пройдёт
+    проверку остатка на уровне самого SQL-запроса, а не на уровне Python-кода,
+    который мог бы прочитать устаревший баланс между двумя кликами."""
+    with closing(get_conn()) as conn, conn:
+        cur = conn.execute(
+            f"UPDATE users SET {field} = {field} - ? WHERE user_id=? AND {field} >= ?",
+            (amount, user_id, amount),
+        )
+        return cur.rowcount > 0
+
+
+def try_start_dig(user_id):
+    """Атомарно ставит метку начала копания, только если копание ещё не идёт."""
+    with closing(get_conn()) as conn, conn:
+        cur = conn.execute(
+            "UPDATE users SET dig_start_ts=? WHERE user_id=? AND dig_start_ts IS NULL",
+            (int(time.time()), user_id),
+        )
+        return cur.rowcount > 0
+
+
+def try_collect_dig(user_id, expected_start_ts):
+    """Атомарно завершает копание, только если состояние не успело измениться
+    (защита от двойного клика 'Забрать добычу', который иначе удвоил бы лут)."""
+    with closing(get_conn()) as conn, conn:
+        cur = conn.execute(
+            "UPDATE users SET dig_start_ts=NULL WHERE user_id=? AND dig_start_ts=?",
+            (user_id, expected_start_ts),
+        )
+        return cur.rowcount > 0
+
+
+def try_apply_attack_result(user_id, expected_monster_json, **updates):
+    """Атомарно применяет результат тапа 'Атака', только если состояние боя
+    не изменилось с момента чтения (защита от двойного клика, который иначе
+    мог бы засчитать одну победу над монстром дважды)."""
+    set_clause = ", ".join(f"{k}=?" for k in updates)
+    values = list(updates.values()) + [user_id, expected_monster_json]
+    with closing(get_conn()) as conn, conn:
+        cur = conn.execute(
+            f"UPDATE users SET {set_clause} WHERE user_id=? AND monster_json=? AND in_hunt=1",
+            values,
+        )
+        return cur.rowcount > 0
+
+
 def get_top_players(limit=10):
     with closing(get_conn()) as conn:
         rows = conn.execute(
@@ -174,15 +229,16 @@ def get_mutations(user_id):
         return {r["slot"]: dict(r) for r in rows}
 
 
-def set_mutation(user_id, slot, level=None, equipped=None):
-    current = get_mutations(user_id).get(slot, {"level": 0, "equipped": 0})
+def set_mutation(user_id, slot, level=None, equipped=None, variant_key=None):
+    current = get_mutations(user_id).get(slot, {"level": 0, "equipped": 0, "variant_key": None})
     new_level = level if level is not None else current["level"]
     new_equipped = int(equipped) if equipped is not None else current["equipped"]
+    new_variant = variant_key if variant_key is not None else current.get("variant_key")
     with closing(get_conn()) as conn, conn:
         conn.execute(
-            "INSERT INTO mutations (user_id, slot, level, equipped) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(user_id, slot) DO UPDATE SET level=?, equipped=?",
-            (user_id, slot, new_level, new_equipped, new_level, new_equipped),
+            "INSERT INTO mutations (user_id, slot, level, equipped, variant_key) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(user_id, slot) DO UPDATE SET level=?, equipped=?, variant_key=?",
+            (user_id, slot, new_level, new_equipped, new_variant, new_level, new_equipped, new_variant),
         )
 
 

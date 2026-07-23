@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import re
+
 from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
@@ -14,12 +16,29 @@ router = Router()
 NAME_TO_CRAB = {c["name"]: cid for cid, c in CRABS.items()}
 NAME_TO_SHORE = {v: k for k, v in SHORES.items()}
 
+# Telegram first_name/username — произвольный текст пользователя, а не проверенный
+# ник; используем его как никнейм по умолчанию ТОЛЬКО если он безопасен для HTML
+# (иначе сообщения с топом/профилями других игроков могут сломаться или дать
+# HTML-инъекцию). Небезопасный вариант просто заменяем на generic имя.
+_SAFE_NICK = re.compile(r"^[a-zA-Zа-яА-ЯёЁ0-9 _\-]{3,16}$")
+
+
+def _safe_default_nickname(user_id, username, first_name):
+    candidate = username or first_name or ""
+    candidate = candidate.strip()
+    if _SAFE_NICK.match(candidate):
+        return candidate
+    return f"Краб{user_id % 100000}"
+
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     user = database.get_user(message.from_user.id)
     if not user:
-        database.create_user(message.from_user.id, message.from_user.username or message.from_user.first_name)
+        nickname = _safe_default_nickname(
+            message.from_user.id, message.from_user.username, message.from_user.first_name
+        )
+        database.create_user(message.from_user.id, nickname)
         user = database.get_user(message.from_user.id)
 
     if user["crab_type"] and user["shore"]:

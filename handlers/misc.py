@@ -6,7 +6,10 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 import database
-from data import HELP_TEXT, MYTHIC_EVENT_MIN_MOLTS
+from data import (
+    HELP_TEXT, MYTHIC_EVENT_UNLOCK_MOLTS, MYTHIC_EVENT_UNLOCK_MAX_METERS, MYTHIC_EVENT_UNLOCK_KILLS,
+)
+from game_logic import mythic_events_unlocked
 from keyboards import kb, BACK, misc_kb
 from states import Nav
 
@@ -50,10 +53,13 @@ async def show_events(message: Message, state: FSMContext):
     await state.set_state(Nav.events)
     user = database.get_user(message.from_user.id)
 
-    if user["molts"] < MYTHIC_EVENT_MIN_MOLTS:
+    if not mythic_events_unlocked(user):
         await message.answer(
-            f"🐉 Мифические ивенты с боссами открываются после {MYTHIC_EVENT_MIN_MOLTS}-й линьки.\n"
-            f"У тебя сейчас: {user['molts']} линек. Продолжай качаться и линять!",
+            f"🐉 Мифические ивенты с боссами открываются, когда выполнишь ЛЮБОЕ из условий:\n\n"
+            f"• {MYTHIC_EVENT_UNLOCK_MOLTS}-я линька (у тебя: {user['molts']})\n"
+            f"• {MYTHIC_EVENT_UNLOCK_MAX_METERS} м. рекорд по пройденному пути (у тебя: {user['max_meters']})\n"
+            f"• {MYTHIC_EVENT_UNLOCK_KILLS} убитых существ (у тебя: {user['kills']})\n\n"
+            f"Продолжай играть в удобном тебе стиле — все три пути ведут к ивентам!",
             reply_markup=kb([BACK]),
         )
         return
@@ -99,8 +105,8 @@ async def boss_attack(call: CallbackQuery):
     from game_logic import get_effective_stats, player_attack
 
     user = database.get_user(call.from_user.id)
-    if user["molts"] < MYTHIC_EVENT_MIN_MOLTS:
-        await call.answer(f"Нужно пройти минимум {MYTHIC_EVENT_MIN_MOLTS} линек.", show_alert=True)
+    if not mythic_events_unlocked(user):
+        await call.answer("Ивенты пока недоступны — смотри условия в разделе Ивенты.", show_alert=True)
         return
 
     event_id = int(call.data.split("_")[-1])
@@ -110,7 +116,8 @@ async def boss_attack(call: CallbackQuery):
         return
 
     stones = database.get_stones(call.from_user.id)
-    stats = get_effective_stats(user, stones)
+    mutations = database.get_mutations(call.from_user.id)
+    stats = get_effective_stats(user, stones, mutations)
     dmg, is_crit = player_attack(stats)
 
     database.add_event_damage(event_id, call.from_user.id, dmg)

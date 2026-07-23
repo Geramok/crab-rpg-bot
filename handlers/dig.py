@@ -19,7 +19,13 @@ async def show_dig(message: Message):
     now = int(time.time())
 
     if not start_ts:
-        text = "⛏️ <b>Копать</b>\n\nОтправь краба копать дно — через час он принесёт камни, усиливающие характеристики."
+        text = (
+            "⛏️ <b>Копать</b>\n\n"
+            "Отправь краба копать дно — через час он принесёт камни.\n"
+            "💡 Камни начинают действовать <b>автоматически</b>, как только "
+            "попадают в инвентарь — их не нужно отдельно надевать или применять, "
+            "они сразу учтены в разделе «Характеристики»."
+        )
         ikb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="⛏️ Начать копать", callback_data="start_dig")
         ]])
@@ -41,11 +47,10 @@ async def show_dig(message: Message):
 
 @router.callback_query(F.data == "start_dig")
 async def start_dig(call: CallbackQuery):
-    user = database.get_user(call.from_user.id)
-    if user["dig_start_ts"]:
+    started = database.try_start_dig(call.from_user.id)
+    if not started:
         await call.answer("Копание уже идёт.", show_alert=True)
         return
-    database.update_user(call.from_user.id, dig_start_ts=int(time.time()))
     await call.answer("Краб начал копать! Загляни через час.")
     await call.message.edit_text("⛏️ Краб копает дно... Загляни примерно через час.")
 
@@ -59,13 +64,20 @@ async def collect_dig(call: CallbackQuery):
         await call.answer("Копание ещё не завершено.", show_alert=True)
         return
 
+    # атомарно "забираем" именно ЭТУ сессию копания (по её метке времени) —
+    # если кто-то успел нажать дважды подряд, второй клик просто не найдёт
+    # совпадения и не удвоит добычу
+    collected = database.try_collect_dig(call.from_user.id, start_ts)
+    if not collected:
+        await call.answer("Уже забрано!", show_alert=True)
+        return
+
     loot = roll_dig_loot()
     for color, level in loot:
         database.add_stone(call.from_user.id, color, level, 1)
-    database.update_user(call.from_user.id, dig_start_ts=None)
 
     counter = Counter(loot)
-    lines = ["🎁 <b>Добыча:</b>"]
+    lines = ["🎁 <b>Добыча (уже применена к характеристикам):</b>"]
     for (color, level), cnt in counter.items():
         lines.append(f"{STONE_COLORS[color]['name']} (ур. {level}) × {cnt}")
     await call.answer("Добыча получена!")

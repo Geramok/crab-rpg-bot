@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import re
 import time
 from datetime import datetime
 
@@ -7,21 +8,29 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 import database
-from data import CRABS, SHORES, MUTATION_SLOTS, SPECIAL_MUTATIONS
-from game_logic import get_effective_stats, get_mutation_abilities, level_up_cost
+from data import CRABS, SHORES, MUTATION_SLOT_NAMES, SPECIAL_MUTATIONS, STAT_LABELS
+from game_logic import get_effective_stats, get_mutation_variant, level_up_cost
 from keyboards import profile_kb, kb, BACK, other_profile_kb
 from states import Nav
 
 router = Router()
 
 NICK_COOLDOWN_SECONDS = 7 * 24 * 60 * 60
+# Ник показывается другим игрокам (топ, поиск, профили) в сообщениях с parse_mode=HTML.
+# Разрешаем только буквы/цифры/пробел/_/- — это закрывает HTML-инъекцию через ник
+# (иначе кто-то мог бы вписать <b>/<a href=...> и сломать чужие сообщения).
+NICKNAME_PATTERN = re.compile(r"^[a-zA-Zа-яА-ЯёЁ0-9 _\-]{3,16}$")
 
 
 def _equipped_mutation_names(user_id):
     mutations = database.get_mutations(user_id)
     special = database.get_special_mutations(user_id)
-    names = [MUTATION_SLOTS[s]["name"] + f" ({MUTATION_SLOTS[s]['ability_name']})"
-             for s, m in mutations.items() if m["equipped"] and m["level"] > 0]
+    names = []
+    for slot, m in mutations.items():
+        if m["equipped"] and m["level"] > 0 and m.get("variant_key"):
+            variant = get_mutation_variant(slot, m["variant_key"])
+            if variant:
+                names.append(f"{variant['name']} (ур. {m['level']})")
     names += [SPECIAL_MUTATIONS[k]["name"] for k, v in special.items() if v["equipped"]]
     return names
 
@@ -72,9 +81,21 @@ async def show_characteristics(message: Message):
     user = database.get_user(message.from_user.id)
     stones = database.get_stones(message.from_user.id)
     mutations = database.get_mutations(message.from_user.id)
-    stats = get_effective_stats(user, stones)
-    abilities = get_mutation_abilities(mutations)
+    stats = get_effective_stats(user, stones, mutations)
     cost = level_up_cost(user["crab_level"], user["molts"])
+
+    equipped_lines = []
+    for slot, m in mutations.items():
+        if m["equipped"] and m["level"] > 0 and m.get("variant_key"):
+            variant = get_mutation_variant(slot, m["variant_key"])
+            if variant:
+                buff = variant["buff_per_level"] * m["level"]
+                debuff = variant["debuff_per_level"] * m["level"]
+                equipped_lines.append(
+                    f"{variant['name']} (ур. {m['level']}): +{buff:.1f} {STAT_LABELS[variant['buff_stat']]}, "
+                    f"-{debuff:.1f} {STAT_LABELS[variant['debuff_stat']]}"
+                )
+    mutations_txt = "\n".join(equipped_lines) if equipped_lines else "нет надетых мутаций"
 
     text = (
         f"📊 <b>Характеристики</b>\n\n"
@@ -85,10 +106,7 @@ async def show_characteristics(message: Message):
         f"🎯 Крит. шанс: {stats['crit_chance']:.1f}%\n"
         f"💥 Крит. урон: {stats['crit_damage']:.1f}%\n"
         f"❤️ Прочность: {stats['max_hp']}\n\n"
-        f"<b>Пассивные навыки от мутаций:</b>\n"
-        f"🦵 Рывок (двойной удар): {abilities['dash_chance']:.1f}%\n"
-        f"🛡️ Регенерация после победы: {abilities['regen_percent']:.1f}%\n"
-        f"✂️ Хватка (бонусный удар): {abilities['rend_chance']:.1f}%\n\n"
+        f"<b>Надетые мутации-артефакты:</b>\n{mutations_txt}\n\n"
         f"💰 Золото: {user['gold']}\n"
         f"Повышение уровня стоит: {cost} 💰"
     )
@@ -106,7 +124,12 @@ async def level_up(call: CallbackQuery, state: FSMContext):
     if user["gold"] < cost:
         await call.answer(f"Не хватает золота! Нужно {cost} 💰.", show_alert=True)
         return
-    database.update_user(call.from_user.id, gold=user["gold"] - cost, crab_level=user["crab_level"] + 1)
+
+    spent = database.try_spend(call.from_user.id, "gold", cost)
+    if not spent:
+        await call.answer("Не успел — баланс уже изменился, попробуй ещё раз.", show_alert=True)
+        return
+    database.update_user(call.from_user.id, crab_level=user["crab_level"] + 1)
     await call.answer("Уровень повышен!")
 
     user = database.get_user(call.from_user.id)
@@ -116,9 +139,9 @@ async def level_up(call: CallbackQuery, state: FSMContext):
     ]])
     await call.message.edit_text(
         f"✅ Новый уровень краба: {user['crab_level']}. Золото: {user['gold']} 💰.\n"
-        f"Следующий уровень: {new_cost} 💰"
+        f"Следующий уровень: {new_cost} 💰",
+        reply_markup=ikb,
     )
-    await call.message.answer("Действие:", reply_markup=ikb)
 
 
 # ---------------- Смена ника ----------------
@@ -143,8 +166,11 @@ async def change_nick_apply(message: Message, state: FSMContext):
         await show_profile(message)
         return
     nick = message.text.strip()
-    if not (3 <= len(nick) <= 16):
-        await message.answer("Ник должен быть от 3 до 16 символов. Попробуй ещё раз:")
+    if not NICKNAME_PATTERN.match(nick):
+        await message.answer(
+            "Ник должен быть от 3 до 16 символов: буквы, цифры, пробел, _ или -. "
+            "Символы вроде < > & использовать нельзя. Попробуй ещё раз:"
+        )
         return
     database.update_user(message.from_user.id, nickname=nick, last_nick_change_ts=int(time.time()))
     await state.set_state(Nav.profile)
