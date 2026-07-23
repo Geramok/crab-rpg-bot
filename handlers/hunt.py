@@ -4,6 +4,7 @@ import random
 import time
 
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
@@ -63,15 +64,22 @@ def _render_camp(user_cur_hp, stats_max_hp, camp, last_line=None):
 
 async def _push_battle_update(message, user_id, message_id, text, reply_markup=None):
     """Обновляет боевой экран. Сначала пробует отредактировать существующее
-    сообщение; если Telegram отклонил правку (флуд-контроль при частых тапах,
-    сообщение устарело/удалено и т.п.) — просто шлёт новое сообщение вместо
-    того, чтобы молча падать (из-за чего раньше бой мог 'зависать' без ответа).
-    Возвращает актуальный message_id боевого экрана."""
+    сообщение. Если Telegram отвечает 'message is not modified' — это НЕ ошибка,
+    а нормальный случай (полный промах с обеих сторон подряд даёт побайтово
+    одинаковый текст) — тогда просто ничего не делаем, сообщение и так актуально.
+    Только при НАСТОЯЩЕМ сбое (сообщение устарело/удалено, флуд-контроль и т.п.)
+    шлём новое сообщение вместо того, чтобы молча падать."""
     try:
         await message.bot.edit_message_text(
             chat_id=message.chat.id, message_id=message_id, text=text, reply_markup=reply_markup
         )
         return message_id
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e).lower():
+            return message_id
+        sent = await message.answer(text, reply_markup=reply_markup)
+        database.update_user(user_id, battle_message_id=sent.message_id)
+        return sent.message_id
     except Exception:
         sent = await message.answer(text, reply_markup=reply_markup)
         database.update_user(user_id, battle_message_id=sent.message_id)
@@ -142,6 +150,10 @@ async def pick_guard(call: CallbackQuery):
     await call.answer()
     try:
         await call.message.edit_text(text, reply_markup=ikb)
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            sent = await call.message.answer(text, reply_markup=ikb)
+            database.update_user(call.from_user.id, battle_message_id=sent.message_id)
     except Exception:
         sent = await call.message.answer(text, reply_markup=ikb)
         database.update_user(call.from_user.id, battle_message_id=sent.message_id)
