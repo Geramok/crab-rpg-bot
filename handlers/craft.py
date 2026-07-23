@@ -6,6 +6,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 
 import database
 from data import RESOURCES, NECTAR_RECIPE, NECTAR_BUFF_DAMAGE_MULT, NECTAR_BUFF_DURATION_SECONDS
+from keyboards import kb, BACK
 
 router = Router()
 
@@ -41,7 +42,8 @@ def _craft_text_and_kb(user_id):
 
 async def show_craft(message: Message):
     text, ikb = _craft_text_and_kb(message.from_user.id)
-    await message.answer(text, reply_markup=ikb)
+    await message.answer(text, reply_markup=kb([BACK]))
+    await message.answer("Действие:", reply_markup=ikb)
 
 
 @router.callback_query(F.data == "craft_nectar")

@@ -9,7 +9,7 @@ from game_logic import (
     molt_required_level, dna_points_for_molt, mutation_cost,
     roll_mutation_variant, get_mutation_variant, apply_permanent_boost,
 )
-from keyboards import mutations_root_kb
+from keyboards import mutations_root_kb, kb, BACK
 from states import Nav
 
 router = Router()
@@ -125,7 +125,8 @@ def _mutations_shop_text_and_kb(user_id):
 async def open_mutations_shop(message: Message, state: FSMContext):
     await state.set_state(Nav.mutations_shop)
     text, ikb = _mutations_shop_text_and_kb(message.from_user.id)
-    await message.answer(text, reply_markup=ikb)
+    await message.answer(text, reply_markup=kb([BACK]))
+    await message.answer("Выбери действие:", reply_markup=ikb)
 
 
 _MUTATION_BUY_CALLBACKS = {f"buy_{slot}" for slot in MUTATION_SLOT_NAMES}

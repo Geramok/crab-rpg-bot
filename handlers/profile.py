@@ -123,7 +123,8 @@ def _characteristics_text_and_kb(user_id):
 
 async def show_characteristics(message: Message):
     text, ikb = _characteristics_text_and_kb(message.from_user.id)
-    await message.answer(text, reply_markup=ikb)
+    await message.answer(text, reply_markup=kb([BACK]))
+    await message.answer("Действие:", reply_markup=ikb)
 
 
 @router.callback_query(F.data == "level_up")

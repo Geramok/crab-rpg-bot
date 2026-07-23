@@ -27,7 +27,8 @@ async def show_dig(message: Message):
             "💡 Камни и ресурсы применяются/копятся <b>автоматически</b>, их не нужно "
             "отдельно надевать или использовать."
         )
-        await message.answer(text, reply_markup=dig_duration_kb(DIG_DURATION_OPTIONS_HOURS))
+        await message.answer(text, reply_markup=kb([BACK]))
+        await message.answer("Выбери длительность:", reply_markup=dig_duration_kb(DIG_DURATION_OPTIONS_HOURS))
         return
 
     if now - start_ts < duration:
@@ -41,7 +42,8 @@ async def show_dig(message: Message):
     ikb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="🎁 Забрать добычу", callback_data="collect_dig")
     ]])
-    await message.answer(text, reply_markup=ikb)
+    await message.answer(text, reply_markup=kb([BACK]))
+    await message.answer("Действие:", reply_markup=ikb)
 
 
 @router.callback_query(F.data.startswith("dig_start_"))

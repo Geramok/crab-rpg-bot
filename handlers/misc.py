@@ -34,9 +34,8 @@ async def show_top(message: Message, state: FSMContext):
 async def show_help(message: Message, state: FSMContext):
     await state.set_state(Nav.misc_detail)
     title, text = HELP_PAGES[0]
-    await message.answer(
-        f"<b>{title}</b>\n\n{text}", reply_markup=help_pagination_kb(0, len(HELP_PAGES))
-    )
+    await message.answer(f"<b>{title}</b>\n\n{text}", reply_markup=kb([BACK]))
+    await message.answer("Листай страницы:", reply_markup=help_pagination_kb(0, len(HELP_PAGES)))
 
 
 @router.callback_query(F.data.startswith("help_page_"))
@@ -116,7 +115,8 @@ async def show_events(message: Message, state: FSMContext):
     ikb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="⚔️ Атаковать босса", callback_data=f"boss_attack_{event['id']}")
     ]])
-    await message.answer(text, reply_markup=ikb)
+    await message.answer(text, reply_markup=kb([BACK]))
+    await message.answer("Действие:", reply_markup=ikb)
 
 
 @router.callback_query(F.data.startswith("boss_attack_"))
