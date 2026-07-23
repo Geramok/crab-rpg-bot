@@ -18,6 +18,7 @@ class Nav(StatesGroup):
     events = State()
     shop = State()
     waiting_nickname = State()
+    waiting_search = State()
 
 
 # Куда возвращает кнопка "Назад" из каждого состояния
@@ -33,4 +34,5 @@ PARENT_STATE = {
     Nav.misc: Nav.menu_root,
     Nav.events: Nav.misc,
     Nav.shop: Nav.profile,
+    Nav.waiting_search: Nav.profile,
 }

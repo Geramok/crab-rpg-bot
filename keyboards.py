@@ -45,7 +45,11 @@ def menu_root_kb():
 
 
 def profile_kb():
-    return kb(["✏️ Сменить ник", "🛍️ Магазин"], [BACK])
+    return kb(["✏️ Сменить ник", "🛍️ Магазин"], ["🔍 Найти игрока", "🎲 Другие игроки"], [BACK])
+
+
+def other_profile_kb():
+    return kb([BACK])
 
 
 def misc_kb():

@@ -8,8 +8,8 @@ from aiogram.fsm.context import FSMContext
 
 import database
 from data import CRABS, SHORES, MUTATION_SLOTS, SPECIAL_MUTATIONS
-from game_logic import get_effective_stats, level_up_cost
-from keyboards import profile_kb, kb, BACK
+from game_logic import get_effective_stats, get_mutation_abilities, level_up_cost
+from keyboards import profile_kb, kb, BACK, other_profile_kb
 from states import Nav
 
 router = Router()
@@ -17,13 +17,18 @@ router = Router()
 NICK_COOLDOWN_SECONDS = 7 * 24 * 60 * 60
 
 
+def _equipped_mutation_names(user_id):
+    mutations = database.get_mutations(user_id)
+    special = database.get_special_mutations(user_id)
+    names = [MUTATION_SLOTS[s]["name"] + f" ({MUTATION_SLOTS[s]['ability_name']})"
+             for s, m in mutations.items() if m["equipped"] and m["level"] > 0]
+    names += [SPECIAL_MUTATIONS[k]["name"] for k, v in special.items() if v["equipped"]]
+    return names
+
+
 async def show_profile(message: Message):
     user = database.get_user(message.from_user.id)
-    mutations = database.get_mutations(message.from_user.id)
-    special = database.get_special_mutations(message.from_user.id)
-
-    equipped = [MUTATION_SLOTS[s]["name"] for s, m in mutations.items() if m["equipped"] and m["level"] > 0]
-    equipped += [SPECIAL_MUTATIONS[k]["name"] for k, v in special.items() if v["equipped"]]
+    equipped = _equipped_mutation_names(message.from_user.id)
     equipped_txt = ", ".join(equipped) if equipped else "нет"
 
     reg_date = datetime.fromtimestamp(user["registered_at"]).strftime("%d.%m.%Y") if user["registered_at"] else "—"
@@ -34,6 +39,7 @@ async def show_profile(message: Message):
         f"Краб: {CRABS[user['crab_type']]['name']}\n"
         f"Берег: {SHORES.get(user['shore'], '—')}\n"
         f"Уровень краба: {user['crab_level']}\n"
+        f"Линек пройдено: {user['molts']}\n"
         f"Надетые мутации: {equipped_txt}\n"
         f"Пройденный путь (рекорд): {user['max_meters']} м\n"
         f"Баланс золота: {user['gold']} 💰\n"
@@ -46,11 +52,28 @@ async def show_profile(message: Message):
     await message.answer(text, reply_markup=profile_kb())
 
 
+async def _show_other_profile_text(target_user):
+    equipped = _equipped_mutation_names(target_user["user_id"])
+    equipped_txt = ", ".join(equipped) if equipped else "нет"
+    text = (
+        f"👤 <b>Профиль игрока {target_user['nickname']}</b>\n\n"
+        f"Краб: {CRABS[target_user['crab_type']]['name']}\n"
+        f"Уровень краба: {target_user['crab_level']}\n"
+        f"Линек пройдено: {target_user['molts']}\n"
+        f"Мутации: {equipped_txt}\n"
+        f"Пройденный путь (рекорд): {target_user['max_meters']} м\n"
+        f"Убито существ: {target_user['kills']}\n"
+        f"Убито боссов: {target_user['boss_kills']}"
+    )
+    return text
+
+
 async def show_characteristics(message: Message):
     user = database.get_user(message.from_user.id)
-    mutations = database.get_mutations(message.from_user.id)
     stones = database.get_stones(message.from_user.id)
-    stats = get_effective_stats(user, mutations, stones)
+    mutations = database.get_mutations(message.from_user.id)
+    stats = get_effective_stats(user, stones)
+    abilities = get_mutation_abilities(mutations)
     cost = level_up_cost(user["crab_level"], user["molts"])
 
     text = (
@@ -62,6 +85,10 @@ async def show_characteristics(message: Message):
         f"🎯 Крит. шанс: {stats['crit_chance']:.1f}%\n"
         f"💥 Крит. урон: {stats['crit_damage']:.1f}%\n"
         f"❤️ Прочность: {stats['max_hp']}\n\n"
+        f"<b>Пассивные навыки от мутаций:</b>\n"
+        f"🦵 Рывок (двойной удар): {abilities['dash_chance']:.1f}%\n"
+        f"🛡️ Регенерация после победы: {abilities['regen_percent']:.1f}%\n"
+        f"✂️ Хватка (бонусный удар): {abilities['rend_chance']:.1f}%\n\n"
         f"💰 Золото: {user['gold']}\n"
         f"Повышение уровня стоит: {cost} 💰"
     )
@@ -105,7 +132,6 @@ async def change_nick_request(message: Message, state: FSMContext):
         days = left // 86400 + 1
         await message.answer(f"Менять ник можно раз в 7 дней. Подожди ещё ~{days} дн.", reply_markup=profile_kb())
         return
-    await state.update_data(return_state="profile")
     await state.set_state(Nav.waiting_nickname)
     await message.answer("Введи новый ник (3-16 символов):", reply_markup=kb([BACK]))
 
@@ -126,19 +152,62 @@ async def change_nick_apply(message: Message, state: FSMContext):
     await show_profile(message)
 
 
-# ---------------- Магазин (заглушка под реальные платежи) ----------------
+# ---------------- Магазин (реальные платежи через Telegram Stars) ----------------
 
 @router.message(Nav.profile, F.text == "🛍️ Магазин")
-async def open_shop(message: Message, state: FSMContext):
-    await state.set_state(Nav.shop)
-    user = database.get_user(message.from_user.id)
-    text = (
-        "🛍️ <b>Магазин</b>\n\n"
-        f"🐚 Раковин наутилуса: {user['nautilus_shells']}\n\n"
-        "За раковины можно купить:\n"
-        "🐟 Золотой скат — разовая порция золота\n"
-        "🦐 Синяя креветка — разовая порция очков ДНК\n\n"
-        "⚠️ Оплата реальными деньгами пока не подключена (нужна регистрация ИП для приёма платежей). "
-        "Как только подключим платёжную систему, здесь появится возможность купить раковины."
+async def open_shop_entry(message: Message, state: FSMContext):
+    from handlers.shop import open_shop
+    await open_shop(message, state)
+
+
+# ---------------- Поиск игрока по нику ----------------
+
+@router.message(Nav.profile, F.text == "🔍 Найти игрока")
+async def search_player_request(message: Message, state: FSMContext):
+    await state.set_state(Nav.waiting_search)
+    await message.answer("Введи ник игрока, которого хочешь найти:", reply_markup=kb([BACK]))
+
+
+@router.message(Nav.waiting_search)
+async def search_player_apply(message: Message, state: FSMContext):
+    if message.text == BACK:
+        await state.set_state(Nav.profile)
+        await show_profile(message)
+        return
+    target = database.find_user_by_nickname(message.text.strip())
+    if not target:
+        await message.answer("Игрок с таким ником не найден. Попробуй другой ник:")
+        return
+    text = await _show_other_profile_text(target)
+    await state.set_state(Nav.profile)
+    await message.answer(text, reply_markup=other_profile_kb())
+
+
+# ---------------- Случайные игроки для просмотра профиля ----------------
+
+@router.message(Nav.profile, F.text == "🎲 Другие игроки")
+async def suggest_players(message: Message, state: FSMContext):
+    players = database.get_random_players(message.from_user.id, limit=4)
+    if not players:
+        await message.answer("Пока в игре больше никого нет — приглашай друзей! 🦀", reply_markup=profile_kb())
+        return
+    buttons = [[InlineKeyboardButton(
+        text=f"{p['nickname']} (ур. {p['crab_level']}, {p['molts']} линек)",
+        callback_data=f"view_profile_{p['user_id']}",
+    )] for p in players]
+    await message.answer(
+        "🎲 Вот несколько игроков — можешь глянуть их профиль:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
-    await message.answer(text, reply_markup=kb([BACK]))
+
+
+@router.callback_query(F.data.startswith("view_profile_"))
+async def view_profile_callback(call: CallbackQuery, state: FSMContext):
+    target_id = int(call.data.split("_")[-1])
+    target = database.get_user(target_id)
+    if not target:
+        await call.answer("Этот игрок пропал из базы.", show_alert=True)
+        return
+    text = await _show_other_profile_text(target)
+    await call.answer()
+    await call.message.answer(text)

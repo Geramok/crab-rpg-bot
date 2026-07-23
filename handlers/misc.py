@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 import database
-from data import HELP_TEXT
+from data import HELP_TEXT, MYTHIC_EVENT_MIN_MOLTS
 from keyboards import kb, BACK, misc_kb
 from states import Nav
 
@@ -48,10 +48,20 @@ async def show_stats(message: Message):
 @router.message(Nav.misc, F.text == "🐉 Ивенты")
 async def show_events(message: Message, state: FSMContext):
     await state.set_state(Nav.events)
+    user = database.get_user(message.from_user.id)
+
+    if user["molts"] < MYTHIC_EVENT_MIN_MOLTS:
+        await message.answer(
+            f"🐉 Мифические ивенты с боссами открываются после {MYTHIC_EVENT_MIN_MOLTS}-й линьки.\n"
+            f"У тебя сейчас: {user['molts']} линек. Продолжай качаться и линять!",
+            reply_markup=kb([BACK]),
+        )
+        return
+
     event = database.get_active_event()
     if not event:
         await message.answer(
-            "Сейчас нет активных ивентов с боссами. Загляни позже! 🌊",
+            "Сейчас нет активных ивентов с боссами. Они запускаются автоматически — загляни позже! 🌊",
             reply_markup=kb([BACK]),
         )
         return
@@ -72,6 +82,10 @@ async def show_events(message: Message, state: FSMContext):
             text += f"{i}. {name} — {row['damage']} урона\n"
     else:
         text += "пока никто не атаковал\n"
+    text += (
+        "\n💡 Награды распределяются не только по топу урона — жемчужные кейсы "
+        "разыгрываются между всеми активными участниками, шанс есть у каждого!"
+    )
 
     ikb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="⚔️ Атаковать босса", callback_data=f"boss_attack_{event['id']}")
@@ -84,16 +98,19 @@ async def show_events(message: Message, state: FSMContext):
 async def boss_attack(call: CallbackQuery):
     from game_logic import get_effective_stats, player_attack
 
+    user = database.get_user(call.from_user.id)
+    if user["molts"] < MYTHIC_EVENT_MIN_MOLTS:
+        await call.answer(f"Нужно пройти минимум {MYTHIC_EVENT_MIN_MOLTS} линек.", show_alert=True)
+        return
+
     event_id = int(call.data.split("_")[-1])
     event = database.get_active_event()
     if not event or event["id"] != event_id:
         await call.answer("Ивент уже завершён.", show_alert=True)
         return
 
-    user = database.get_user(call.from_user.id)
-    mutations = database.get_mutations(call.from_user.id)
     stones = database.get_stones(call.from_user.id)
-    stats = get_effective_stats(user, mutations, stones)
+    stats = get_effective_stats(user, stones)
     dmg, is_crit = player_attack(stats)
 
     database.add_event_damage(event_id, call.from_user.id, dmg)

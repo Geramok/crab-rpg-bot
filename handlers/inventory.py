@@ -34,7 +34,7 @@ async def show_inventory(message: Message):
         if m["level"] > 0:
             any_mut = True
             status = "✅ надета" if m["equipped"] else "выключена"
-            text += f"{MUTATION_SLOTS[slot]['name']} — ур. {m['level']} ({status})\n"
+            text += f"{MUTATION_SLOTS[slot]['name']} «{MUTATION_SLOTS[slot]['ability_name']}» — ур. {m['level']} ({status})\n"
     for key, v in special.items():
         any_mut = True
         status = "✅ надета" if v["equipped"] else "выключена"

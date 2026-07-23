@@ -130,6 +130,23 @@ def get_top_players(limit=10):
         return [dict(r) for r in rows]
 
 
+def find_user_by_nickname(nickname):
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE nickname = ? COLLATE NOCASE LIMIT 1", (nickname,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_random_players(exclude_user_id, limit=3):
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            "SELECT * FROM users WHERE user_id != ? ORDER BY RANDOM() LIMIT ?",
+            (exclude_user_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 # ---------------- STONES ----------------
 
 def add_stone(user_id, color, level, amount=1):
@@ -225,6 +242,15 @@ def get_event_leaderboard(event_id, limit=50):
         rows = conn.execute(
             "SELECT user_id, damage FROM event_damage WHERE event_id=? ORDER BY damage DESC LIMIT ?",
             (event_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_all_event_participants(event_id):
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            "SELECT user_id, damage FROM event_damage WHERE event_id=? ORDER BY damage DESC",
+            (event_id,),
         ).fetchall()
         return [dict(r) for r in rows]
 
