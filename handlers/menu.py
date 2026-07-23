@@ -12,13 +12,15 @@ from states import Nav, PARENT_STATE
 router = Router()
 
 
-@router.message(Nav.main, F.text == "🗡️ На охоту")
+@router.message(Nav.main, F.text == "🔎 Рыскать по дну")
 async def open_hunt(message: Message, state: FSMContext):
     import database
+    from game_logic import get_depth_zone_name
     user = database.get_user(message.from_user.id)
     await state.set_state(Nav.hunt)
+    zone = get_depth_zone_name(user["max_meters"])
     await message.answer(
-        f"🌊 Морское дно... Текущая позиция: {user['cur_meters']} м.\n"
+        f"{zone}\nТекущая позиция: {user['cur_meters']} м.\n"
         f"Лучший результат: {user['max_meters']} м.",
         reply_markup=hunt_kb(bool(user["in_hunt"])),
     )
@@ -69,6 +71,13 @@ async def open_inventory(message: Message, state: FSMContext):
     await show_inventory(message)
 
 
+@router.message(Nav.menu_root, F.text == "🍯 Крафт")
+async def open_craft(message: Message, state: FSMContext):
+    from handlers.craft import show_craft
+    await state.set_state(Nav.craft)
+    await show_craft(message)
+
+
 @router.message(Nav.menu_root, F.text == "🔧 Прочее")
 async def open_misc(message: Message, state: FSMContext):
     await state.set_state(Nav.misc)
@@ -88,9 +97,7 @@ async def go_back(message: Message, state: FSMContext):
     elif parent == Nav.menu_root:
         await message.answer("📋 <b>Меню</b>", reply_markup=menu_root_kb())
     elif parent == Nav.mutations_root:
-        await message.answer(
-            "🧬 <b>Мутации</b>", reply_markup=mutations_root_kb()
-        )
+        await message.answer("🧬 <b>Мутации</b>", reply_markup=mutations_root_kb())
     elif parent == Nav.misc:
         await message.answer("🔧 <b>Прочее</b>", reply_markup=misc_kb())
     elif parent == Nav.profile:

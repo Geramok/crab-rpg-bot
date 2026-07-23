@@ -10,7 +10,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config import BOT_TOKEN
 from database import init_db
 
-from handlers import start, menu, hunt, mutations, profile, dig, inventory, misc, admin, shop
+from handlers import start, menu, hunt, mutations, profile, dig, inventory, misc, admin, shop, craft
 from handlers.middlewares import EnsureUserMiddleware
 from events_scheduler import events_scheduler_loop
 
@@ -38,6 +38,7 @@ async def main():
     dp.include_router(shop.router)
     dp.include_router(dig.router)
     dp.include_router(inventory.router)
+    dp.include_router(craft.router)
     dp.include_router(misc.router)
 
     await bot.delete_webhook(drop_pending_updates=True)

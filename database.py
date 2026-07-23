@@ -13,6 +13,13 @@ def get_conn():
     return conn
 
 
+def _safe_migrate(conn, sql):
+    try:
+        conn.execute(sql)
+    except sqlite3.OperationalError:
+        pass  # колонка/индекс уже существует
+
+
 def init_db():
     with closing(get_conn()) as conn, conn:
         conn.execute("""
@@ -34,60 +41,63 @@ def init_db():
             kills INTEGER DEFAULT 0,
             boss_kills INTEGER DEFAULT 0,
             dig_start_ts INTEGER,
+            dig_duration_seconds INTEGER,
+            last_hp_regen_ts INTEGER,
             last_nick_change_ts INTEGER,
             registered_at INTEGER,
             total_earned_gold INTEGER DEFAULT 0,
             total_dna_earned INTEGER DEFAULT 0,
-            nautilus_shells INTEGER DEFAULT 0
+            nautilus_shells INTEGER DEFAULT 0,
+            buff_damage_mult REAL,
+            buff_expires_ts INTEGER,
+            permanent_boost INTEGER DEFAULT 0,
+            battle_message_id INTEGER
         )
         """)
+        # Миграции для БД, созданных до появления этих полей
+        for col, coltype in [
+            ("dig_duration_seconds", "INTEGER"), ("last_hp_regen_ts", "INTEGER"),
+            ("buff_damage_mult", "REAL"), ("buff_expires_ts", "INTEGER"),
+            ("permanent_boost", "INTEGER DEFAULT 0"), ("battle_message_id", "INTEGER"),
+        ]:
+            _safe_migrate(conn, f"ALTER TABLE users ADD COLUMN {col} {coltype}")
+
         conn.execute("""
         CREATE TABLE IF NOT EXISTS stones (
-            user_id INTEGER,
-            color TEXT,
-            level INTEGER,
-            count INTEGER DEFAULT 0,
+            user_id INTEGER, color TEXT, level INTEGER, count INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, color, level)
         )
         """)
         conn.execute("""
         CREATE TABLE IF NOT EXISTS mutations (
-            user_id INTEGER,
-            slot TEXT,
-            level INTEGER DEFAULT 0,
-            equipped INTEGER DEFAULT 0,
-            variant_key TEXT,
+            user_id INTEGER, slot TEXT, level INTEGER DEFAULT 0,
+            equipped INTEGER DEFAULT 0, variant_key TEXT,
             PRIMARY KEY (user_id, slot)
         )
         """)
-        # Миграция для уже существующих БД, созданных до появления вариантов-артефактов
-        try:
-            conn.execute("ALTER TABLE mutations ADD COLUMN variant_key TEXT")
-        except sqlite3.OperationalError:
-            pass  # колонка уже есть
+        _safe_migrate(conn, "ALTER TABLE mutations ADD COLUMN variant_key TEXT")
+
         conn.execute("""
         CREATE TABLE IF NOT EXISTS special_mutations (
-            user_id INTEGER,
-            key TEXT,
-            equipped INTEGER DEFAULT 0,
+            user_id INTEGER, key TEXT, equipped INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, key)
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS resources (
+            user_id INTEGER, key TEXT, count INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, key)
         )
         """)
         conn.execute("""
         CREATE TABLE IF NOT EXISTS events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            description TEXT,
-            started_at INTEGER,
-            ends_at INTEGER,
-            active INTEGER DEFAULT 1
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT,
+            started_at INTEGER, ends_at INTEGER, active INTEGER DEFAULT 1
         )
         """)
         conn.execute("""
         CREATE TABLE IF NOT EXISTS event_damage (
-            event_id INTEGER,
-            user_id INTEGER,
-            damage INTEGER DEFAULT 0,
+            event_id INTEGER, user_id INTEGER, damage INTEGER DEFAULT 0,
             PRIMARY KEY (event_id, user_id)
         )
         """)
@@ -108,8 +118,9 @@ def user_exists(user_id):
 def create_user(user_id, username):
     with closing(get_conn()) as conn, conn:
         conn.execute(
-            "INSERT INTO users (user_id, username, nickname, registered_at) VALUES (?, ?, ?, ?)",
-            (user_id, username, username, int(time.time())),
+            "INSERT INTO users (user_id, username, nickname, registered_at, last_hp_regen_ts) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (user_id, username, username, int(time.time()), int(time.time())),
         )
         for slot in ("legs", "shell", "claws"):
             conn.execute(
@@ -128,11 +139,8 @@ def update_user(user_id, **fields):
 
 
 def try_spend(user_id, field, amount):
-    """Атомарно списывает amount из поля field, ТОЛЬКО если средств хватает.
-    Возвращает True при успехе. Защищает от гонки: если два быстрых клика
-    (двойной тап) прилетят почти одновременно, второй просто не пройдёт
-    проверку остатка на уровне самого SQL-запроса, а не на уровне Python-кода,
-    который мог бы прочитать устаревший баланс между двумя кликами."""
+    """Атомарно списывает amount из поля field, только если средств хватает.
+    Защита от гонки при быстром двойном клике."""
     with closing(get_conn()) as conn, conn:
         cur = conn.execute(
             f"UPDATE users SET {field} = {field} - ? WHERE user_id=? AND {field} >= ?",
@@ -141,31 +149,25 @@ def try_spend(user_id, field, amount):
         return cur.rowcount > 0
 
 
-def try_start_dig(user_id):
-    """Атомарно ставит метку начала копания, только если копание ещё не идёт."""
+def try_start_dig(user_id, duration_seconds):
     with closing(get_conn()) as conn, conn:
         cur = conn.execute(
-            "UPDATE users SET dig_start_ts=? WHERE user_id=? AND dig_start_ts IS NULL",
-            (int(time.time()), user_id),
+            "UPDATE users SET dig_start_ts=?, dig_duration_seconds=? WHERE user_id=? AND dig_start_ts IS NULL",
+            (int(time.time()), duration_seconds, user_id),
         )
         return cur.rowcount > 0
 
 
 def try_collect_dig(user_id, expected_start_ts):
-    """Атомарно завершает копание, только если состояние не успело измениться
-    (защита от двойного клика 'Забрать добычу', который иначе удвоил бы лут)."""
     with closing(get_conn()) as conn, conn:
         cur = conn.execute(
-            "UPDATE users SET dig_start_ts=NULL WHERE user_id=? AND dig_start_ts=?",
+            "UPDATE users SET dig_start_ts=NULL, dig_duration_seconds=NULL WHERE user_id=? AND dig_start_ts=?",
             (user_id, expected_start_ts),
         )
         return cur.rowcount > 0
 
 
 def try_apply_attack_result(user_id, expected_monster_json, **updates):
-    """Атомарно применяет результат тапа 'Атака', только если состояние боя
-    не изменилось с момента чтения (защита от двойного клика, который иначе
-    мог бы засчитать одну победу над монстром дважды)."""
     set_clause = ", ".join(f"{k}=?" for k in updates)
     values = list(updates.values()) + [user_id, expected_monster_json]
     with closing(get_conn()) as conn, conn:
@@ -179,7 +181,7 @@ def try_apply_attack_result(user_id, expected_monster_json, **updates):
 def get_top_players(limit=10):
     with closing(get_conn()) as conn:
         rows = conn.execute(
-            "SELECT nickname, crab_level, molts FROM users ORDER BY molts DESC, crab_level DESC LIMIT ?",
+            "SELECT nickname, crab_level, molts, max_meters FROM users ORDER BY molts DESC, crab_level DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -219,6 +221,44 @@ def get_stones(user_id):
             "SELECT color, level, count FROM stones WHERE user_id=? AND count > 0", (user_id,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ---------------- RESOURCES / КРАФТ ----------------
+
+def add_resource(user_id, key, amount=1):
+    with closing(get_conn()) as conn, conn:
+        conn.execute(
+            "INSERT INTO resources (user_id, key, count) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id, key) DO UPDATE SET count = count + ?",
+            (user_id, key, amount, amount),
+        )
+
+
+def get_resources(user_id):
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            "SELECT key, count FROM resources WHERE user_id=?", (user_id,)
+        ).fetchall()
+        return {r["key"]: r["count"] for r in rows}
+
+
+def try_craft(user_id, recipe):
+    """Атомарно проверяет и списывает ресурсы по рецепту (recipe: {key: amount}).
+    Возвращает True, если удалось (хватило всех ресурсов сразу)."""
+    with closing(get_conn()) as conn, conn:
+        current = {
+            r["key"]: r["count"]
+            for r in conn.execute("SELECT key, count FROM resources WHERE user_id=?", (user_id,)).fetchall()
+        }
+        for key, need in recipe.items():
+            if current.get(key, 0) < need:
+                return False
+        for key, need in recipe.items():
+            conn.execute(
+                "UPDATE resources SET count = count - ? WHERE user_id=? AND key=?",
+                (need, user_id, key),
+            )
+        return True
 
 
 # ---------------- MUTATIONS ----------------
@@ -278,9 +318,7 @@ def create_event(name, description, duration_seconds):
 
 def get_active_event():
     with closing(get_conn()) as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1").fetchone()
         return dict(row) if row else None
 
 

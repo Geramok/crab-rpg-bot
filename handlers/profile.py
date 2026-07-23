@@ -8,8 +8,8 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 import database
-from data import CRABS, SHORES, MUTATION_SLOT_NAMES, SPECIAL_MUTATIONS, STAT_LABELS
-from game_logic import get_effective_stats, get_mutation_variant, level_up_cost
+from data import CRABS, MUTATION_SLOT_NAMES, SPECIAL_MUTATIONS, STAT_LABELS
+from game_logic import get_effective_stats, get_mutation_variant, level_up_cost, get_depth_zone_name
 from keyboards import profile_kb, kb, BACK, other_profile_kb
 from states import Nav
 
@@ -42,11 +42,12 @@ async def show_profile(message: Message):
 
     reg_date = datetime.fromtimestamp(user["registered_at"]).strftime("%d.%m.%Y") if user["registered_at"] else "—"
 
+    zone = get_depth_zone_name(user["max_meters"])
     text = (
         f"👤 <b>Профиль</b>\n\n"
         f"Ник: {user['nickname']}\n"
         f"Краб: {CRABS[user['crab_type']]['name']}\n"
-        f"Берег: {SHORES.get(user['shore'], '—')}\n"
+        f"Уровень моря: {zone}\n"
         f"Уровень краба: {user['crab_level']}\n"
         f"Линек пройдено: {user['molts']}\n"
         f"Надетые мутации: {equipped_txt}\n"
@@ -58,15 +59,19 @@ async def show_profile(message: Message):
         f"Раковин наутилуса: {user['nautilus_shells']}\n"
         f"Дата регистрации: {reg_date}"
     )
+    if user["permanent_boost"]:
+        text += "\n🌟 Вечный прилив: +15% к золоту и ДНК навсегда"
     await message.answer(text, reply_markup=profile_kb())
 
 
 async def _show_other_profile_text(target_user):
     equipped = _equipped_mutation_names(target_user["user_id"])
     equipped_txt = ", ".join(equipped) if equipped else "нет"
+    zone = get_depth_zone_name(target_user["max_meters"])
     text = (
         f"👤 <b>Профиль игрока {target_user['nickname']}</b>\n\n"
         f"Краб: {CRABS[target_user['crab_type']]['name']}\n"
+        f"Уровень моря: {zone}\n"
         f"Уровень краба: {target_user['crab_level']}\n"
         f"Линек пройдено: {target_user['molts']}\n"
         f"Мутации: {equipped_txt}\n"
@@ -77,10 +82,10 @@ async def _show_other_profile_text(target_user):
     return text
 
 
-async def show_characteristics(message: Message):
-    user = database.get_user(message.from_user.id)
-    stones = database.get_stones(message.from_user.id)
-    mutations = database.get_mutations(message.from_user.id)
+def _characteristics_text_and_kb(user_id):
+    user = database.get_user(user_id)
+    stones = database.get_stones(user_id)
+    mutations = database.get_mutations(user_id)
     stats = get_effective_stats(user, stones, mutations)
     cost = level_up_cost(user["crab_level"], user["molts"])
 
@@ -113,6 +118,11 @@ async def show_characteristics(message: Message):
     ikb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=f"⬆️ Повысить уровень ({cost} 💰)", callback_data="level_up")
     ]])
+    return text, ikb
+
+
+async def show_characteristics(message: Message):
+    text, ikb = _characteristics_text_and_kb(message.from_user.id)
     await message.answer(text, reply_markup=kb([BACK]))
     await message.answer("Действие:", reply_markup=ikb)
 
@@ -132,16 +142,10 @@ async def level_up(call: CallbackQuery, state: FSMContext):
     database.update_user(call.from_user.id, crab_level=user["crab_level"] + 1)
     await call.answer("Уровень повышен!")
 
-    user = database.get_user(call.from_user.id)
-    new_cost = level_up_cost(user["crab_level"], user["molts"])
-    ikb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=f"⬆️ Повысить уровень ({new_cost} 💰)", callback_data="level_up")
-    ]])
-    await call.message.edit_text(
-        f"✅ Новый уровень краба: {user['crab_level']}. Золото: {user['gold']} 💰.\n"
-        f"Следующий уровень: {new_cost} 💰",
-        reply_markup=ikb,
-    )
+    # редактируем ТО ЖЕ сообщение с полной актуальной сводкой характеристик —
+    # видно "изменено" вместо нового сообщения в чате
+    text, ikb = _characteristics_text_and_kb(call.from_user.id)
+    await call.message.edit_text(f"✅ Уровень повышен!\n\n{text}", reply_markup=ikb)
 
 
 # ---------------- Смена ника ----------------

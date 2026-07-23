@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
+import time
+
 from aiogram import Router
 from aiogram.types import Message
 
 import database
-from data import STONE_COLORS, MUTATION_SLOT_NAMES, SPECIAL_MUTATIONS, STAT_LABELS
+from data import STONE_COLORS, MUTATION_SLOT_NAMES, SPECIAL_MUTATIONS, STAT_LABELS, RESOURCES
 from game_logic import get_mutation_variant
 from keyboards import kb, BACK
 
@@ -15,6 +17,7 @@ async def show_inventory(message: Message):
     stones = database.get_stones(message.from_user.id)
     mutations = database.get_mutations(message.from_user.id)
     special = database.get_special_mutations(message.from_user.id)
+    resources = database.get_resources(message.from_user.id)
 
     text = (
         f"🎒 <b>Инвентарь</b>\n\n"
@@ -28,6 +31,21 @@ async def show_inventory(message: Message):
             text += f"{STONE_COLORS[s['color']]['name']} (ур. {s['level']}) × {s['count']}\n"
     else:
         text += "пока пусто\n"
+
+    text += "\n<b>Ресурсы для крафта:</b>\n"
+    any_res = False
+    for key, info in RESOURCES.items():
+        cnt = resources.get(key, 0)
+        if cnt:
+            any_res = True
+        text += f"{info['name']}: {cnt}\n"
+    if not any_res:
+        text += "(добываются с убийств и копания)\n"
+
+    now = int(time.time())
+    if user["buff_expires_ts"] and user["buff_expires_ts"] > now:
+        left_min = (user["buff_expires_ts"] - now) // 60 + 1
+        text += f"\n✨ <b>Нектар силы активен</b> ещё {left_min} мин.\n"
 
     text += "\n<b>Мутации-артефакты:</b>\n"
     any_mut = False
@@ -50,5 +68,8 @@ async def show_inventory(message: Message):
         text += f"{SPECIAL_MUTATIONS[key]['name']} ({status})\n"
     if not any_mut:
         text += "пока нет мутаций\n"
+
+    if user["permanent_boost"]:
+        text += "\n🌟 <b>Вечный прилив активен:</b> +15% к золоту и ДНК навсегда."
 
     await message.answer(text, reply_markup=kb([BACK]))

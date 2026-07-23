@@ -1,40 +1,35 @@
 # -*- coding: utf-8 -*-
 """
-Все формулы баланса собраны здесь. Это стартовые цифры для долгой прогрессии —
-если тестами выяснится, что где-то слишком легко/тяжело, правь только этот файл.
+Все формулы баланса собраны здесь.
 """
 import random
 
 from data import (
     CRABS, MUTATION_SLOT_BASE_COST, MUTATION_VARIANTS,
-    STONE_COLORS, STONE_LEVEL_BONUS, STONE_LEVEL_CHANCE,
+    STONE_COLORS, STONE_EFFECT_BONUS, STONE_LEVEL_CHANCE,
     MYTHIC_EVENT_UNLOCK_MOLTS, MYTHIC_EVENT_UNLOCK_MAX_METERS, MYTHIC_EVENT_UNLOCK_KILLS,
+    MONSTERS, DEPTH_ZONES, PLAYER_MISS_CHANCE,
+    GUARD_CAMP_INTERVAL, GUARD_CAMP_ELITE_MULT,
+    DIG_STONES_PER_HOUR, RESOURCE_DROP_CHANCE_KILL, RESOURCE_DROP_CHANCE_DIG, RESOURCES,
+    NECTAR_BUFF_DAMAGE_MULT, NECTAR_BUFF_DURATION_SECONDS,
+    PERMANENT_BOOST_MULT,
 )
 
-MOLT_BASE_LEVEL = 70          # уровень, нужный для 1-й линьки
-MOLT_LEVEL_STEP = 15          # на сколько растёт требование с каждой следующей линькой
+MOLT_BASE_LEVEL = 70
+MOLT_LEVEL_STEP = 15
 
 
 def molt_required_level(molts):
-    """Уровень краба, необходимый для (molts+1)-й линьки.
-    Каждая следующая линька требует ощутимо более высокого уровня — специально,
-    чтобы нельзя было бесконечно линять на минимальном уровне."""
     return MOLT_BASE_LEVEL + molts * MOLT_LEVEL_STEP
 
 
 def level_up_cost(current_level, molts):
-    """Цена повышения уровня краба с current_level на current_level+1."""
     base = 6 * (current_level ** 1.35)
     molt_scale = 1 + molts * 0.4
     return max(5, round(base * molt_scale))
 
 
 def dna_points_for_molt(molts, crab_level):
-    """Сколько очков ДНК даёт линька. База растёт ЭКСПОНЕНЦИАЛЬНО вместе с
-    числом линек (чтобы поспевать за тем, как дорожают мутации — см.
-    mutation_cost), а дополнительный бонус начисляется за каждый уровень
-    СВЕРХ минимально требуемого — специально, чтобы имело смысл забираться
-    выше требуемого уровня, а не линять впритык."""
     required = molt_required_level(molts)
     base = 14 * (1.45 ** molts)
     over_levels = max(0, crab_level - required)
@@ -43,17 +38,12 @@ def dna_points_for_molt(molts, crab_level):
 
 
 def mutation_cost(slot, target_level, total_levels_owned):
-    """Цена повышения мутации slot до уровня target_level (первая покупка = выпадение
-    случайного артефакта, дальнейшие = его прокачка).
-    total_levels_owned — суммарный уровень ВСЕХ мутаций игрока (до этой покупки),
-    из-за чего каждая следующая покупка/апгрейд дороже предыдущей."""
     base = MUTATION_SLOT_BASE_COST[slot]
     cost = base * (target_level ** 1.35) * (1 + total_levels_owned * 0.10)
     return max(1, round(cost))
 
 
 def roll_mutation_variant(slot):
-    """Случайно выбирает артефакт для слота при первой покупке мутации."""
     return random.choice(MUTATION_VARIANTS[slot])
 
 
@@ -64,22 +54,67 @@ def get_mutation_variant(slot, variant_key):
     return None
 
 
+# ---------------- Монстры ----------------
+
 def next_monster_meters(current_meters):
     step = random.randint(1, 15)
     return current_meters + step
 
 
-def monster_stats(meters):
-    """HP/урон/золото монстра в зависимости от того, на каком метре он встретился."""
-    hp = int(12 + meters * 2.6 + meters ** 1.12)
-    dmg = int(2 + meters * 0.55 + (meters ** 1.05) * 0.08)
-    gold = int(5 + meters * 1.5 + (meters ** 1.08) * 0.25)
-    return {"hp": hp, "max_hp": hp, "dmg": max(1, dmg), "gold": max(1, gold)}
+def _base_monster_numbers(meters):
+    hp = 12 + meters * 2.6 + meters ** 1.12
+    dmg = 2 + meters * 0.55 + (meters ** 1.05) * 0.08
+    gold = 5 + meters * 1.5 + (meters ** 1.08) * 0.25
+    return hp, dmg, gold
 
 
-def roll_dig_loot():
-    """Возвращает список (color, level) добытых камней за одно копание."""
-    n = random.randint(3, 6)
+def eligible_monsters(meters):
+    pool = [m for m in MONSTERS if m["min_meters"] <= meters]
+    return pool or [MONSTERS[0]]
+
+
+def roll_monster(meters, elite_mult=1.0):
+    """Собирает конкретного противника на метре meters: случайный вид из
+    доступных на этой глубине + числа, посчитанные по базовой формуле,
+    помноженные на индивидуальные множители вида (и elite_mult для стражей)."""
+    species = random.choice(eligible_monsters(meters))
+    hp_base, dmg_base, gold_base = _base_monster_numbers(meters)
+    hp = max(1, round(hp_base * species["hp_mult"] * elite_mult))
+    dmg = max(1, round(dmg_base * species["dmg_mult"] * elite_mult))
+    gold = max(1, round(gold_base * species["gold_mult"]))
+    return {
+        "key": species["key"], "name": species["name"], "art": species["art"],
+        "evasion": species["evasion"],
+        "hp": hp, "max_hp": hp, "dmg": dmg, "gold": gold,
+        "poison_turns": 0, "poison_dmg": 0,
+    }
+
+
+def is_guard_camp_meter(previous_meters, new_meters):
+    """Засада из 3 стражей происходит, когда путь пересекает границу,
+    кратную GUARD_CAMP_INTERVAL метров."""
+    return (new_meters // GUARD_CAMP_INTERVAL) > (previous_meters // GUARD_CAMP_INTERVAL)
+
+
+def roll_guard_camp(meters):
+    return [roll_monster(meters, elite_mult=GUARD_CAMP_ELITE_MULT) for _ in range(3)]
+
+
+def get_depth_zone_name(meters):
+    name = DEPTH_ZONES[0][1]
+    for threshold, zone_name in DEPTH_ZONES:
+        if meters >= threshold:
+            name = zone_name
+        else:
+            break
+    return name
+
+
+def roll_dig_loot(hours):
+    """Камни: строго ЛИНЕЙНО от часов — короткое копание никогда не выгоднее
+    длинного за то же суммарное время (защита от абуза частыми короткими
+    сессиями)."""
+    n = max(1, round(hours * DIG_STONES_PER_HOUR * random.uniform(0.85, 1.15)))
     loot = []
     colors = list(STONE_COLORS.keys())
     for _ in range(n):
@@ -96,9 +131,23 @@ def roll_dig_loot():
     return loot
 
 
+def roll_dig_resources(hours):
+    """Ресурсы для крафта тоже линейно от времени копания."""
+    found = []
+    ticks = max(1, round(hours))
+    for _ in range(ticks):
+        if random.random() < RESOURCE_DROP_CHANCE_DIG:
+            found.append(random.choice(list(RESOURCES.keys())))
+    return found
+
+
+def roll_kill_resource():
+    if random.random() < RESOURCE_DROP_CHANCE_KILL:
+        return random.choice(list(RESOURCES.keys()))
+    return None
+
+
 def get_effective_stats(user, stones, mutations=None):
-    """Характеристики краба: базовые от вида краба + уровень + камни + надетые
-    мутации-артефакты (у каждой — один плюс и один минус к характеристике)."""
     crab_base = CRABS[user["crab_type"]]
     stats = {
         "damage": float(crab_base["damage"]),
@@ -114,7 +163,7 @@ def get_effective_stats(user, stones, mutations=None):
 
     for st in stones:
         effect = STONE_COLORS[st["color"]]["effect"]
-        bonus = STONE_LEVEL_BONUS[st["level"]] * st["count"]
+        bonus = STONE_EFFECT_BONUS[effect][st["level"]] * st["count"]
         stats[effect] += bonus
 
     if mutations:
@@ -133,34 +182,71 @@ def get_effective_stats(user, stones, mutations=None):
     stats["damage"] = max(1.0, stats["damage"])
     stats["max_hp"] = max(10, round(stats["max_hp"]))
 
+    # Нектар силы — временный бафф урона (см. handlers/craft.py)
+    if user.get("buff_expires_ts") and user.get("buff_damage_mult"):
+        import time
+        if user["buff_expires_ts"] > int(time.time()):
+            stats["damage"] *= user["buff_damage_mult"]
+
     return stats
 
 
-def player_attack(stats, force_crit=False):
-    """Считает урон одного тапа по кнопке 'Атака'. Возвращает (урон, был_ли_крит)."""
+def player_attack(stats, monster_evasion=0, force_crit=False):
+    """Считает урон одного тапа. monster_evasion — доп. шанс промаха ИМЕННО
+    из-за особенностей вида существа (см. data.MONSTERS), не улучшается игроком.
+    Возвращает (урон, был_ли_крит, промах_ли)."""
+    if random.random() * 100 < (PLAYER_MISS_CHANCE + monster_evasion):
+        return 0, False, True
     dmg = stats["damage"] * random.uniform(0.9, 1.1)
     is_crit = force_crit or (random.random() * 100 < stats["crit_chance"])
     if is_crit:
         dmg *= stats["crit_damage"] / 100
-    return round(dmg), is_crit
+    return round(dmg), is_crit, False
 
 
 def monster_attack(monster, stats):
-    """Считает, попал ли монстр по крабу и на сколько. Возвращает (урон, уклонился_ли)."""
     if random.random() * 100 < stats["evasion"]:
         return 0, True
     dmg = monster["dmg"] * random.uniform(0.85, 1.15)
     return round(dmg), False
 
 
-def gold_reward(monster, stats):
+def gold_reward(monster, stats, user=None):
     mult = 1 + stats["luck"] / 100
-    return max(1, round(monster["gold"] * mult))
+    amount = max(1, round(monster["gold"] * mult))
+    return apply_permanent_boost(amount, user)
+
+
+def apply_permanent_boost(amount, user):
+    if user and user.get("permanent_boost"):
+        return round(amount * PERMANENT_BOOST_MULT)
+    return amount
+
+
+def apply_idle_regen(user, stats, now):
+    """Прочность НЕ восстанавливается мгновенно между боями — только
+    постепенно, пока игрок не в бою (полное восстановление занимает ~30 минут
+    простоя — достаточно, чтобы не быть мгновенным чит-хилом, но не заставлять
+    ждать часами между короткими игровыми сессиями)."""
+    if user["cur_hp"] >= stats["max_hp"]:
+        return stats["max_hp"]
+    last_ts = user["last_hp_regen_ts"] or now
+    elapsed_minutes = max(0, (now - last_ts) / 60)
+    heal_fraction = min(1.0, elapsed_minutes / 30)
+    missing = stats["max_hp"] - user["cur_hp"]
+    healed = missing * heal_fraction
+    return min(stats["max_hp"], round(user["cur_hp"] + healed))
+
+
+def defeat_knockback_meters(cur_meters):
+    """При поражении краба отбрасывает назад (а не скидывает на берег целиком).
+    12% текущей позиции, но не меньше 5 метров — на малых дистанциях (десятки
+    метров) откат не должен съедать больше половины пути."""
+    knockback = max(5, round(cur_meters * 0.12))
+    return max(0, cur_meters - knockback)
 
 
 def weighted_sample_without_replacement(items, weights, k):
-    """Взвешенная выборка БЕЗ повторов — используется для честной раздачи
-    жемчужных кейсов на ивентах (не только топовым игрокам по урону)."""
     pool = list(zip(items, weights))
     result = []
     for _ in range(min(k, len(pool))):
@@ -178,19 +264,12 @@ def weighted_sample_without_replacement(items, weights, k):
     return result
 
 
-# ---------------- Магазин: награда в процентах от текущего прогресса ----------------
-
 def shop_gold_reward(user, levels_worth):
-    """Золото = стоимость levels_worth уровней прокачки НА ТЕКУЩЕМ этапе игры.
-    Так покупка одинаково полезна и в начале, и на 100-м уровне, и её нельзя
-    абузить, скупая дёшево на старте — ранняя стоимость уровня сама по себе мала."""
     cost = level_up_cost(user["crab_level"], user["molts"])
     return max(50, round(cost * levels_worth))
 
 
 def shop_dna_reward(mutations, upgrades_worth):
-    """Очки ДНК = средняя стоимость upgrades_worth апгрейдов мутаций на текущем
-    этапе (учитывает суммарный уровень уже купленных мутаций)."""
     total_levels = sum(m.get("level", 0) for m in mutations.values()) if mutations else 0
     costs = []
     for slot in MUTATION_SLOT_BASE_COST:
@@ -200,12 +279,7 @@ def shop_dna_reward(mutations, upgrades_worth):
     return max(5, round(avg_cost * upgrades_worth))
 
 
-# ---------------- Открытие мифических ивентов ----------------
-
 def mythic_events_unlocked(user):
-    """Несколько альтернативных путей открытия ивентов — не только линьки,
-    но и большой пройденный путь или много убийств, чтобы не запирать контент
-    только за самым медленным способом прогрессии."""
     return (
         user["molts"] >= MYTHIC_EVENT_UNLOCK_MOLTS
         or user["max_meters"] >= MYTHIC_EVENT_UNLOCK_MAX_METERS

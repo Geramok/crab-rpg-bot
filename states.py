@@ -14,6 +14,7 @@ class Nav(StatesGroup):
     characteristics = State()
     dig = State()
     inventory = State()
+    craft = State()
     misc = State()
     events = State()
     shop = State()
@@ -31,6 +32,7 @@ PARENT_STATE = {
     Nav.characteristics: Nav.menu_root,
     Nav.dig: Nav.menu_root,
     Nav.inventory: Nav.menu_root,
+    Nav.craft: Nav.menu_root,
     Nav.misc: Nav.menu_root,
     Nav.events: Nav.misc,
     Nav.shop: Nav.profile,

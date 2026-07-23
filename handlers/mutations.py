@@ -7,7 +7,7 @@ import database
 from data import MUTATION_SLOT_NAMES, STAT_LABELS
 from game_logic import (
     molt_required_level, dna_points_for_molt, mutation_cost,
-    roll_mutation_variant, get_mutation_variant,
+    roll_mutation_variant, get_mutation_variant, apply_permanent_boost,
 )
 from keyboards import mutations_root_kb, kb, BACK
 from states import Nav
@@ -35,7 +35,7 @@ async def molt_request(message: Message, state: FSMContext):
         )
         return
 
-    gain = dna_points_for_molt(user["molts"], user["crab_level"])
+    gain = apply_permanent_boost(dna_points_for_molt(user["molts"], user["crab_level"]), user)
     over = user["crab_level"] - required
     bonus_txt = f" (в т.ч. +{round(over * 0.4)} за {over} уровней сверх минимума)" if over > 0 else ""
     await message.answer(
@@ -55,7 +55,7 @@ async def molt_confirm(call: CallbackQuery, state: FSMContext):
         await call.answer("Условие для линьки больше не выполняется.", show_alert=True)
         return
 
-    gain = dna_points_for_molt(user["molts"], user["crab_level"])
+    gain = apply_permanent_boost(dna_points_for_molt(user["molts"], user["crab_level"]), user)
     database.update_user(
         call.from_user.id,
         crab_level=1,

@@ -7,10 +7,10 @@ from aiogram.fsm.context import FSMContext
 
 import database
 from data import (
-    HELP_TEXT, MYTHIC_EVENT_UNLOCK_MOLTS, MYTHIC_EVENT_UNLOCK_MAX_METERS, MYTHIC_EVENT_UNLOCK_KILLS,
+    HELP_PAGES, MYTHIC_EVENT_UNLOCK_MOLTS, MYTHIC_EVENT_UNLOCK_MAX_METERS, MYTHIC_EVENT_UNLOCK_KILLS,
 )
-from game_logic import mythic_events_unlocked
-from keyboards import kb, BACK, misc_kb
+from game_logic import mythic_events_unlocked, get_depth_zone_name
+from keyboards import kb, BACK, misc_kb, help_pagination_kb
 from states import Nav
 
 router = Router()
@@ -24,13 +24,29 @@ async def show_top(message: Message):
         text += "Пока пусто."
     else:
         for i, p in enumerate(top, 1):
-            text += f"{i}. {p['nickname']} — {p['crab_level']} ур. ({p['molts']} линек)\n"
+            zone = get_depth_zone_name(p["max_meters"])
+            text += f"{i}. {p['nickname']} — {p['crab_level']} ур. ({p['molts']} линек, {zone})\n"
     await message.answer(text, reply_markup=kb([BACK]))
 
 
 @router.message(Nav.misc, F.text == "❓ Помощь")
 async def show_help(message: Message):
-    await message.answer(HELP_TEXT, reply_markup=kb([BACK]))
+    title, text = HELP_PAGES[0]
+    await message.answer(f"<b>{title}</b>\n\n{text}", reply_markup=kb([BACK]))
+    await message.answer("Листай страницы:", reply_markup=help_pagination_kb(0, len(HELP_PAGES)))
+
+
+@router.callback_query(F.data.startswith("help_page_"))
+async def help_page(call: CallbackQuery):
+    page = int(call.data.split("_")[-1])
+    if not (0 <= page < len(HELP_PAGES)):
+        await call.answer()
+        return
+    title, text = HELP_PAGES[page]
+    await call.answer()
+    await call.message.edit_text(
+        f"<b>{title}</b>\n\n{text}", reply_markup=help_pagination_kb(page, len(HELP_PAGES))
+    )
 
 
 @router.message(Nav.misc, F.text == "📈 Статистика")
@@ -43,7 +59,7 @@ async def show_stats(message: Message):
         f"Убито существ: {user['kills']}\n"
         f"Убито боссов: {user['boss_kills']}\n"
         f"Линек пройдено: {user['molts']}\n"
-        f"Рекорд по пройденному пути: {user['max_meters']} м"
+        f"Рекорд по пройденному пути: {user['max_meters']} м ({get_depth_zone_name(user['max_meters'])})"
     )
     await message.answer(text, reply_markup=kb([BACK]))
 
@@ -118,7 +134,11 @@ async def boss_attack(call: CallbackQuery):
     stones = database.get_stones(call.from_user.id)
     mutations = database.get_mutations(call.from_user.id)
     stats = get_effective_stats(user, stones, mutations)
-    dmg, is_crit = player_attack(stats)
+    dmg, is_crit, missed = player_attack(stats)
+
+    if missed:
+        await call.answer("💨 Промах!")
+        return
 
     database.add_event_damage(event_id, call.from_user.id, dmg)
     crit_txt = " 💥 Крит!" if is_crit else ""
