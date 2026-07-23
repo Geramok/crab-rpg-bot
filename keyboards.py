@@ -23,7 +23,7 @@ def main_menu_kb():
 
 def hunt_kb(in_hunt: bool):
     if in_hunt:
-        return kb(["⚔️ Атака"], ["🏃 Отступить"], [BACK])
+        return kb(["🏃 Отступить"], [BACK])
     return kb(["🔎 Рыскать по дну"], [BACK])
 
 

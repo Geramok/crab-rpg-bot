@@ -4,7 +4,7 @@ from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 
 from keyboards import (
-    BACK, main_menu_kb, hunt_kb, mutations_root_kb, menu_root_kb,
+    BACK, main_menu_kb, mutations_root_kb, menu_root_kb,
     misc_kb,
 )
 from states import Nav, PARENT_STATE
@@ -14,16 +14,9 @@ router = Router()
 
 @router.message(Nav.main, F.text == "🔎 Рыскать по дну")
 async def open_hunt(message: Message, state: FSMContext):
-    import database
-    from game_logic import get_depth_zone_name
-    user = database.get_user(message.from_user.id)
+    from handlers.hunt import perform_search
     await state.set_state(Nav.hunt)
-    zone = get_depth_zone_name(user["max_meters"])
-    await message.answer(
-        f"{zone}\nТекущая позиция: {user['cur_meters']} м.\n"
-        f"Лучший результат: {user['max_meters']} м.",
-        reply_markup=hunt_kb(bool(user["in_hunt"])),
-    )
+    await perform_search(message)
 
 
 @router.message(Nav.main, F.text == "🧬 Мутации")

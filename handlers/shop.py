@@ -53,20 +53,23 @@ async def open_shop(message: Message, state: FSMContext):
     text = (
         "🛍️ <b>Магазин за Telegram Stars</b>\n\n"
         f"🐚 Раковин наутилуса: {user['nautilus_shells']}\n\n"
-        "Награда считается в процентах от твоего ТЕКУЩЕГО прогресса.\n\n"
+        "Чем дальше ты продвинулся — тем щедрее награда за покупку.\n\n"
     )
     if user["permanent_boost"]:
         text += "🌟 У тебя уже активен Вечный прилив (+15% навсегда).\n\n"
     for key, item in SHOP_ITEMS.items():
         if key == "eternal_tide" and user["permanent_boost"]:
             continue
-        preview = _preview_reward(message.from_user.id, item)
-        text += f"{item['title']} — {item['description']}\nСейчас это ≈{preview}. Цена: {item['stars']} ⭐\n\n"
+        if item["reward_type"] == "permanent_boost":
+            text += f"{item['title']} — {item['description']}\nЦена: {item['stars']} ⭐\n\n"
+        else:
+            preview = _preview_reward(message.from_user.id, item)
+            text += f"{item['title']} — {item['description']}\nСейчас это ≈{preview}. Цена: {item['stars']} ⭐\n\n"
     await message.answer(text, reply_markup=kb([BACK]))
     await message.answer("За звёзды:", reply_markup=_shop_kb())
 
     text2 = (
-        "🐚 <b>За раковины наутилуса</b> (их даёшь мифическими ивентами):\n\n"
+        "🐚 <b>За раковины наутилуса</b> (их дают мифические ивенты):\n\n"
         "⏩ Ускорить копание — мгновенно завершает текущее копание.\n"
         "🎁 Набор ресурсов для крафта — сразу немного каждого ресурса."
     )
@@ -86,11 +89,16 @@ async def buy_star_item(call, state: FSMContext):
             await call.answer("У тебя уже есть Вечный прилив!", show_alert=True)
             return
 
-    preview = _preview_reward(call.from_user.id, item)
+    if item["reward_type"] == "permanent_boost":
+        invoice_description = item["description"]
+    else:
+        preview = _preview_reward(call.from_user.id, item)
+        invoice_description = f"{item['description']} Сейчас это ≈{preview}."
+
     prices = [LabeledPrice(label=item["title"], amount=item["stars"])]
     await call.message.answer_invoice(
         title=item["title"],
-        description=f"{item['description']} Сейчас это ≈{preview}.",
+        description=invoice_description,
         payload=f"shop:{key}",
         provider_token="",
         currency="XTR",

@@ -5,11 +5,29 @@ from contextlib import closing
 
 from config import DB_PATH
 
+_wal_enabled = False
+
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    # timeout здесь — это ПОДСТРАХОВКА (сколько ждать снятия блокировки перед
+    # ошибкой), а не основная защита — основная защита ниже, WAL-режим.
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+
+    global _wal_enabled
+    if not _wal_enabled:
+        # WAL позволяет читать базу, пока кто-то другой в неё пишет (и наоборот) —
+        # без этого режим по умолчанию ('delete') блокирует ВСЁ на время записи,
+        # а наш бот открывает новое соединение почти на каждый вызов (получить
+        # юзера/камни/мутации/начать бой — это несколько отдельных обращений на
+        # одно игровое действие), так что при частых запросах блокировки реальны
+        # и дают ощутимые случайные задержки — это и есть WAL-фикс.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=10000")
+        _wal_enabled = True
+    else:
+        conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
 
@@ -163,6 +181,19 @@ def try_collect_dig(user_id, expected_start_ts):
         cur = conn.execute(
             "UPDATE users SET dig_start_ts=NULL, dig_duration_seconds=NULL WHERE user_id=? AND dig_start_ts=?",
             (user_id, expected_start_ts),
+        )
+        return cur.rowcount > 0
+
+
+def try_claim_hunt_slot(user_id):
+    """Атомарно 'занимает' начало охоты — только если игрок ещё не в бою.
+    Защита от гонки: если 'Рыскать по дну' прилетит несколько раз почти
+    одновременно (двойной тап, лаг клиента и т.п.), захватить слот сможет
+    только ОДИН запрос, остальные корректно увидят 'уже сражаешься'."""
+    with closing(get_conn()) as conn, conn:
+        cur = conn.execute(
+            "UPDATE users SET in_hunt=1 WHERE user_id=? AND in_hunt=0",
+            (user_id,),
         )
         return cur.rowcount > 0
 

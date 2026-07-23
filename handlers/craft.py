@@ -15,17 +15,15 @@ def _craft_text_and_kb(user_id):
     resources = database.get_resources(user_id)
     user = database.get_user(user_id)
 
-    text = "🍯 <b>Крафт — Нектар силы</b>\n\nТвои ресурсы:\n"
-    for key, info in RESOURCES.items():
-        text += f"{info['name']}: {resources.get(key, 0)}\n"
-
-    text += "\n<b>Рецепт Нектара силы:</b>\n"
+    text = "🍯 <b>Крафт — Нектар силы</b>\n\n<b>Рецепт:</b>\n"
     for key, need in NECTAR_RECIPE.items():
         have = resources.get(key, 0)
-        text += f"{RESOURCES[key]['name']}: {have}/{need}\n"
+        mark = "✅" if have >= need else "▫️"
+        text += f"{mark} {RESOURCES[key]['name']}: {have}/{need}\n"
     text += (
         f"\nЭффект: +{round((NECTAR_BUFF_DAMAGE_MULT - 1) * 100)}% урона на "
-        f"{NECTAR_BUFF_DURATION_SECONDS // 60} минут при использовании."
+        f"{NECTAR_BUFF_DURATION_SECONDS // 60} минут при использовании.\n"
+        f"💡 Ресурсы падают с убийств и копания."
     )
 
     now = int(time.time())
@@ -43,7 +41,7 @@ def _craft_text_and_kb(user_id):
 async def show_craft(message: Message):
     text, ikb = _craft_text_and_kb(message.from_user.id)
     await message.answer(text, reply_markup=kb([BACK]))
-    await message.answer("Действие:", reply_markup=ikb)
+    await message.answer("Готов скрафтить?", reply_markup=ikb)
 
 
 @router.callback_query(F.data == "craft_nectar")

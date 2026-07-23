@@ -116,7 +116,7 @@ async def show_events(message: Message, state: FSMContext):
         InlineKeyboardButton(text="⚔️ Атаковать босса", callback_data=f"boss_attack_{event['id']}")
     ]])
     await message.answer(text, reply_markup=kb([BACK]))
-    await message.answer("Действие:", reply_markup=ikb)
+    await message.answer("Готов атаковать?", reply_markup=ikb)
 
 
 @router.callback_query(F.data.startswith("boss_attack_"))

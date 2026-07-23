@@ -43,7 +43,7 @@ async def show_dig(message: Message):
         InlineKeyboardButton(text="🎁 Забрать добычу", callback_data="collect_dig")
     ]])
     await message.answer(text, reply_markup=kb([BACK]))
-    await message.answer("Действие:", reply_markup=ikb)
+    await message.answer("Забрать добычу?", reply_markup=ikb)
 
 
 @router.callback_query(F.data.startswith("dig_start_"))

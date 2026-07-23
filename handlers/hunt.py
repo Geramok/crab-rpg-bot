@@ -20,6 +20,8 @@ from states import Nav
 
 router = Router()
 
+ATTACK_BUTTON = InlineKeyboardButton(text="⚔️ Атака", callback_data="hunt_attack")
+
 
 def _equipped_specials(user_id):
     special = database.get_special_mutations(user_id)
@@ -42,7 +44,8 @@ def _render_single(user_cur_hp, stats_max_hp, monster, last_line=None):
     )
     if last_line:
         text += f"\n{last_line}"
-    return text
+    ikb = InlineKeyboardMarkup(inline_keyboard=[[ATTACK_BUTTON]])
+    return text, ikb
 
 
 def _render_camp(user_cur_hp, stats_max_hp, camp, last_line=None):
@@ -53,13 +56,15 @@ def _render_camp(user_cur_hp, stats_max_hp, camp, last_line=None):
         status = "повержен" if camp["defeated"][i] else f"{max(guard['hp'],0)}/{guard['max_hp']} HP"
         text += f"{mark} {guard['name']} — {status}\n"
         if not camp["defeated"][i]:
-            buttons.append([InlineKeyboardButton(text=f"🎯 Бить: {guard['name']}", callback_data=f"pick_guard_{i}")])
+            btn_text = f"🎯 {'Бить' if i == camp['current'] else 'Переключиться на'}: {guard['name']}"
+            buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"pick_guard_{i}")])
     current_guard = camp["guards"][camp["current"]]
     text += f"\n<pre>{current_guard['art']}</pre>\n"
     text += f"🦀 Ты: [{_hp_bar(user_cur_hp, stats_max_hp)}] {max(user_cur_hp,0)}/{stats_max_hp}\n"
     if last_line:
         text += f"\n{last_line}"
-    return text, InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+    buttons.append([ATTACK_BUTTON])
+    return text, InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 async def _push_battle_update(message, user_id, message_id, text, reply_markup=None):
@@ -86,17 +91,46 @@ async def _push_battle_update(message, user_id, message_id, text, reply_markup=N
         return sent.message_id
 
 
-@router.message(Nav.hunt, F.text == "🔎 Рыскать по дну")
-async def search_enemy(message: Message, state: FSMContext):
+async def perform_search(message: Message):
+    """Общая логика 'Рыскать по дну': если игрок уже в бою — не шлём заново
+    весь боевой экран (это создавало бы спам при случайных повторных нажатиях
+    или гонке), а просто напоминаем, что бой уже идёт. Отдельно подстраховка
+    на случай ДЕЙСТВИТЕЛЬНО потерянного состояния (в базе in_hunt=1, но нет
+    сохранённого battle_message_id — например, после сбоя) — тогда воссоздаём
+    экран боя заново. Если игрок не в бою — атомарно занимает слот охоты и
+    ищет нового противника."""
     user = database.get_user(message.from_user.id)
-    if user["in_hunt"]:
+
+    if user["in_hunt"] and user["monster_json"]:
+        if user["battle_message_id"]:
+            await message.answer(
+                "Ты уже сражаешься! Жми «⚔️ Атака» на боевом сообщении выше или «🏃 Отступить».",
+                reply_markup=hunt_kb(True),
+            )
+            return
+        # редкая подстраховка: бой в базе есть, а экрана боя не сохранилось
+        # (например, после сбоя) — воссоздаём отображение заново
+        stones = database.get_stones(message.from_user.id)
+        mutations = database.get_mutations(message.from_user.id)
+        stats = get_effective_stats(user, stones, mutations)
+        data = json.loads(user["monster_json"])
+        if data.get("is_camp"):
+            text, ikb = _render_camp(user["cur_hp"], stats["max_hp"], data)
+        else:
+            text, ikb = _render_single(user["cur_hp"], stats["max_hp"], data)
+        sent = await message.answer(text, reply_markup=hunt_kb(True))
+        database.update_user(message.from_user.id, battle_message_id=sent.message_id)
+        await _push_battle_update(message, message.from_user.id, sent.message_id, text, ikb)
+        return
+
+    claimed = database.try_claim_hunt_slot(message.from_user.id)
+    if not claimed:
         await message.answer("Ты уже сражаешься! Атакуй или отступи.", reply_markup=hunt_kb(True))
         return
 
     stones = database.get_stones(message.from_user.id)
     mutations = database.get_mutations(message.from_user.id)
     stats = get_effective_stats(user, stones, mutations)
-
     now = int(time.time())
     healed_hp = apply_idle_regen(user, stats, now)
 
@@ -114,19 +148,24 @@ async def search_enemy(message: Message, state: FSMContext):
         monster = roll_monster(new_meters)
         monster["meters"] = new_meters
         monster_json = json.dumps(monster)
-        text, ikb = _render_single(healed_hp, stats["max_hp"], monster), None
+        text, ikb = _render_single(healed_hp, stats["max_hp"], monster)
 
-    # Сначала обновляем нижнюю клавиатуру (Атака/Отступить) — это отдельное
+    # Сначала обновляем нижнюю клавиатуру (Отступить/Назад) — это отдельное
     # сообщение по требованию Telegram (нельзя одновременно сменить reply-клавиатуру
-    # и прикрепить инлайн-кнопки к одному сообщению).
+    # и прикрепить инлайн-кнопки к одному сообщению). Кнопка "Атака" теперь
+    # инлайн — прикрепляется вторым шагом сразу же.
     sent = await message.answer(text, reply_markup=hunt_kb(True))
     database.update_user(
         message.from_user.id,
         in_hunt=1, monster_json=monster_json, cur_hp=healed_hp,
         last_hp_regen_ts=now, battle_message_id=sent.message_id,
     )
-    if ikb:
-        await _push_battle_update(message, message.from_user.id, sent.message_id, text, ikb)
+    await _push_battle_update(message, message.from_user.id, sent.message_id, text, ikb)
+
+
+@router.message(Nav.hunt, F.text == "🔎 Рыскать по дну")
+async def search_enemy(message: Message, state: FSMContext):
+    await perform_search(message)
 
 
 @router.callback_query(F.data.startswith("pick_guard_"))
@@ -197,21 +236,25 @@ def _do_combat_round(target, stats, specials, log):
     return do_hit.heal
 
 
-@router.message(Nav.hunt, F.text == "⚔️ Атака")
-async def attack(message: Message, state: FSMContext):
-    user = database.get_user(message.from_user.id)
+@router.callback_query(F.data == "hunt_attack")
+async def attack(call: CallbackQuery):
+    user_id = call.from_user.id
+    user = database.get_user(user_id)
     if not user["in_hunt"] or not user["monster_json"]:
-        await message.answer("Сейчас не с кем сражаться. Нажми «🔎 Рыскать по дну».", reply_markup=hunt_kb(False))
+        await call.answer("Сейчас не с кем сражаться. Нажми «🔎 Рыскать по дну».", show_alert=True)
         return
 
-    stones = database.get_stones(message.from_user.id)
-    mutations = database.get_mutations(message.from_user.id)
+    message = call.message  # для _push_battle_update: chat/bot/answer те же, что и у Message
+    stones = database.get_stones(user_id)
+    mutations = database.get_mutations(user_id)
     stats = get_effective_stats(user, stones, mutations)
-    specials = _equipped_specials(message.from_user.id)
+    specials = _equipped_specials(user_id)
     original_monster_json = user["monster_json"]
     data = json.loads(original_monster_json)
     is_camp = data.get("is_camp", False)
     target = data["guards"][data["current"]] if is_camp else data
+
+    await call.answer()
 
     log = []
     cur_hp = user["cur_hp"]
@@ -227,17 +270,17 @@ async def attack(message: Message, state: FSMContext):
                 data["current"] = remaining[0]
                 text, ikb = _render_camp(cur_hp, stats["max_hp"], data, last_line="\n".join(log) + "\n\n🎯 Выбери следующую цель.")
                 applied = database.try_apply_attack_result(
-                    message.from_user.id, original_monster_json,
+                    user_id, original_monster_json,
                     monster_json=json.dumps(data), cur_hp=cur_hp,
                 )
                 if not applied:
                     return
-                await _push_battle_update(message, message.from_user.id, user["battle_message_id"], text, ikb)
+                await _push_battle_update(message, user_id, user["battle_message_id"], text, ikb)
                 return
             total_gold = sum(gold_reward(g, stats, user) for g in data["guards"])
             new_max_meters = max(user["max_meters"], data["meters"])
             applied = database.try_apply_attack_result(
-                message.from_user.id, original_monster_json,
+                user_id, original_monster_json,
                 in_hunt=0, monster_json=None, cur_hp=cur_hp,
                 gold=user["gold"] + total_gold, kills=user["kills"] + 3,
                 cur_meters=data["meters"], max_meters=new_max_meters,
@@ -247,16 +290,16 @@ async def attack(message: Message, state: FSMContext):
             if not applied:
                 return
             if resource:
-                database.add_resource(message.from_user.id, resource)
+                database.add_resource(user_id, resource)
             final_text = "🏆 <b>Засада зачищена!</b>\n" + "\n".join(log) + f"\n\n💰 Получено золота за всех троих: {total_gold}"
-            await _push_battle_update(message, message.from_user.id, user["battle_message_id"], final_text)
+            await _push_battle_update(message, user_id, user["battle_message_id"], final_text)
             await message.answer("Готов к новому рысканью по дну.", reply_markup=hunt_kb(False))
             return
 
         gold = gold_reward(data, stats, user)
         new_max_meters = max(user["max_meters"], data["meters"])
         applied = database.try_apply_attack_result(
-            message.from_user.id, original_monster_json,
+            user_id, original_monster_json,
             in_hunt=0, monster_json=None, cur_hp=cur_hp,
             gold=user["gold"] + gold, kills=user["kills"] + 1,
             cur_meters=data["meters"], max_meters=new_max_meters,
@@ -266,9 +309,9 @@ async def attack(message: Message, state: FSMContext):
         if not applied:
             return
         if resource:
-            database.add_resource(message.from_user.id, resource)
+            database.add_resource(user_id, resource)
         final_text = "🏆 <b>Победа!</b>\n" + "\n".join(log) + f"\n\n💰 Золото: {gold}"
-        await _push_battle_update(message, message.from_user.id, user["battle_message_id"], final_text)
+        await _push_battle_update(message, user_id, user["battle_message_id"], final_text)
         await message.answer("Готов к новому рысканью по дну.", reply_markup=hunt_kb(False))
         return
 
@@ -289,7 +332,7 @@ async def attack(message: Message, state: FSMContext):
         knock_to = defeat_knockback_meters(user["cur_meters"])
         recovered_hp = stats["max_hp"]
         applied = database.try_apply_attack_result(
-            message.from_user.id, original_monster_json,
+            user_id, original_monster_json,
             in_hunt=0, monster_json=None, cur_hp=recovered_hp,
             cur_meters=knock_to, last_hp_regen_ts=int(time.time()),
         )
@@ -300,22 +343,22 @@ async def attack(message: Message, state: FSMContext):
             f"назад до {knock_to} м.\nПрочность восстановлена полностью — можешь пробовать снова прямо сейчас.\n\n"
             + last_line
         )
-        await _push_battle_update(message, message.from_user.id, user["battle_message_id"], final_text)
+        await _push_battle_update(message, user_id, user["battle_message_id"], final_text)
         await message.answer("Можешь продолжать рыскать по дну.", reply_markup=hunt_kb(False))
         return
 
     if is_camp:
         text, ikb = _render_camp(new_hp, stats["max_hp"], data, last_line=last_line)
     else:
-        text, ikb = _render_single(new_hp, stats["max_hp"], data, last_line=last_line), None
+        text, ikb = _render_single(new_hp, stats["max_hp"], data, last_line=last_line)
 
     applied = database.try_apply_attack_result(
-        message.from_user.id, original_monster_json,
+        user_id, original_monster_json,
         cur_hp=new_hp, monster_json=json.dumps(data),
     )
     if not applied:
         return
-    await _push_battle_update(message, message.from_user.id, user["battle_message_id"], text, ikb)
+    await _push_battle_update(message, user_id, user["battle_message_id"], text, ikb)
 
 
 @router.message(Nav.hunt, F.text == "🏃 Отступить")
