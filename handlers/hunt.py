@@ -93,58 +93,12 @@ async def _push_battle_update(message, user_id, message_id, text, reply_markup=N
 
 
 async def perform_search(message: Message):
-    """Общая логика 'Рыскать по дну'. Сначала ВСЕГДА атомарная попытка занять
-    слот охоты — это единственный надёжный источник истины (кто на самом деле
-    сейчас не в бою). Раньше сначала проверялось user['in_hunt'] отдельным
-    чтением ДО этой атомарной попытки — если рядом по времени обрабатывался,
-    например, 'Отступить', это чтение могло увидеть устаревшее in_hunt=1 и
-    показать 'Ты уже сражаешься!' с клавиатурой Отступить/Назад (без кнопки
-    поиска), даже когда бой на самом деле уже закончился — игрок оставался
-    без видимой кнопки продолжить.
-
-    Если первая попытка не удалась — это может быть НАСТОЯЩАЯ гонка (например,
-    'Отступить' обрабатывается в тот же момент и ещё не успел записать свой
-    результат в базу). Даём короткий шанс — ждём мгновение и пробуем ещё раз,
-    прежде чем окончательно решить, что бой действительно идёт."""
-    claimed = database.try_claim_hunt_slot(message.from_user.id)
-
-    if not claimed:
-        await asyncio.sleep(0.2)  # даём шанс параллельному 'Отступить'/бою завершить запись
-        claimed = database.try_claim_hunt_slot(message.from_user.id)
-
-    if not claimed:
-        # действительно не удалось (или это гонка) — перечитываем СВЕЖЕЕ
-        # состояние, чтобы клавиатура и текст точно соответствовали реальности
-        user = database.get_user(message.from_user.id)
-        if user["in_hunt"] and user["monster_json"]:
-            if user["battle_message_id"]:
-                await message.answer(
-                    "Ты уже сражаешься! Жми «⚔️ Атака» на боевом сообщении выше или «🏃 Отступить».",
-                    reply_markup=hunt_kb(True),
-                )
-                return
-            # редкая подстраховка: бой в базе есть, а экрана боя не сохранилось
-            # (например, после сбоя) — воссоздаём отображение заново
-            stones = database.get_stones(message.from_user.id)
-            mutations = database.get_mutations(message.from_user.id)
-            stats = get_effective_stats(user, stones, mutations)
-            data = json.loads(user["monster_json"])
-            if data.get("is_camp"):
-                text, ikb = _render_camp(user["cur_hp"], stats["max_hp"], data)
-            else:
-                text, ikb = _render_single(user["cur_hp"], stats["max_hp"], data)
-            sent = await message.answer(text, reply_markup=hunt_kb(True))
-            database.update_user(message.from_user.id, battle_message_id=sent.message_id)
-            await _push_battle_update(message, message.from_user.id, sent.message_id, text, ikb)
-            return
-        # по факту сейчас не в бою (гонка только что разрешилась) — просто
-        # предлагаем нажать ещё раз, с ПРАВИЛЬНОЙ клавиатурой для реального состояния
-        await message.answer(
-            "Чуть-чуть не успел — попробуй «🔎 Рыскать по дну» ещё раз.",
-            reply_markup=hunt_kb(False),
-        )
-        return
-
+    """Общая логика 'Рыскать по дну'. Считаем всё (монстр/лагерь/статы/текст)
+    ЗАРАНЕЕ, а слот охоты занимаем и монстра записываем ОДНИМ атомарным шагом
+    (см. try_start_new_hunt) — так исключена ситуация 'слот занят, а монстра
+    нет'. Если атомарный шаг не удался — это либо честная гонка с другим
+    действием того же игрока (даём короткий шанс и пробуем ещё раз), либо
+    самовосстановление УЖЕ сломанного состояния из прошлых версий бота."""
     user = database.get_user(message.from_user.id)
     stones = database.get_stones(message.from_user.id)
     mutations = database.get_mutations(message.from_user.id)
@@ -153,7 +107,6 @@ async def perform_search(message: Message):
     healed_hp = apply_idle_regen(user, stats, now)
 
     new_meters = next_monster_meters(user["cur_meters"])
-
     if is_guard_camp_meter(user["cur_meters"], new_meters):
         guards = roll_guard_camp(new_meters)
         camp = {
@@ -168,17 +121,61 @@ async def perform_search(message: Message):
         monster_json = json.dumps(monster)
         text, ikb = _render_single(healed_hp, stats["max_hp"], monster)
 
-    # Сначала обновляем нижнюю клавиатуру (Отступить/Назад) — это отдельное
-    # сообщение по требованию Telegram (нельзя одновременно сменить reply-клавиатуру
-    # и прикрепить инлайн-кнопки к одному сообщению). Кнопка "Атака" теперь
-    # инлайн — прикрепляется вторым шагом сразу же.
-    sent = await message.answer(text, reply_markup=hunt_kb(True))
-    database.update_user(
-        message.from_user.id,
-        in_hunt=1, monster_json=monster_json, cur_hp=healed_hp,
-        last_hp_regen_ts=now, battle_message_id=sent.message_id,
-    )
-    await _push_battle_update(message, message.from_user.id, sent.message_id, text, ikb)
+    started = database.try_start_new_hunt(message.from_user.id, monster_json, healed_hp, now)
+
+    if not started:
+        # Самовосстановление: если в базе застряло сломанное состояние
+        # (in_hunt=1, но monster_json пуст — как раз баг, который тут чинится)
+        # — просто освобождаем слот и пробуем ещё раз, без бесконечных отказов.
+        stuck = database.get_user(message.from_user.id)
+        if stuck["in_hunt"] and not stuck["monster_json"]:
+            database.update_user(message.from_user.id, in_hunt=0)
+            started = database.try_start_new_hunt(message.from_user.id, monster_json, healed_hp, now)
+
+    if not started:
+        await asyncio.sleep(0.2)  # честная гонка с параллельным действием — даём ему шанс завершиться
+        started = database.try_start_new_hunt(message.from_user.id, monster_json, healed_hp, now)
+
+    if not started:
+        user = database.get_user(message.from_user.id)
+        if user["in_hunt"] and user["monster_json"]:
+            if user["battle_message_id"]:
+                await message.answer(
+                    "Ты уже сражаешься! Жми «⚔️ Атака» на боевом сообщении выше или «🏃 Отступить».",
+                    reply_markup=hunt_kb(True),
+                )
+                return
+            # бой в базе есть, а экрана боя не сохранилось — воссоздаём заново
+            data = json.loads(user["monster_json"])
+            if data.get("is_camp"):
+                text2, ikb2 = _render_camp(user["cur_hp"], stats["max_hp"], data)
+            else:
+                text2, ikb2 = _render_single(user["cur_hp"], stats["max_hp"], data)
+            sent = await message.answer(text2, reply_markup=hunt_kb(True))
+            database.update_user(message.from_user.id, battle_message_id=sent.message_id)
+            await _push_battle_update(message, message.from_user.id, sent.message_id, text2, ikb2)
+            return
+        await message.answer(
+            "Чуть-чуть не успел — попробуй «🔎 Рыскать по дну» ещё раз.",
+            reply_markup=hunt_kb(False),
+        )
+        return
+
+    try:
+        # Сначала обновляем нижнюю клавиатуру (Отступить/Назад) — это отдельное
+        # сообщение по требованию Telegram (нельзя одновременно сменить reply-клавиатуру
+        # и прикрепить инлайн-кнопки к одному сообщению). Кнопка "Атака" теперь
+        # инлайн — прикрепляется вторым шагом сразу же.
+        sent = await message.answer(text, reply_markup=hunt_kb(True))
+        database.update_user(message.from_user.id, battle_message_id=sent.message_id)
+        await _push_battle_update(message, message.from_user.id, sent.message_id, text, ikb)
+    except Exception:
+        # Монстр уже записан в базу атомарно вместе со слотом — даже если ЗДЕСЬ
+        # что-то упадёт (например, сеть при отправке), слот НЕ останется висеть
+        # без монстра (как в старом баге): освобождаем его, чтобы следующая
+        # попытка игрока просто сработала заново, а не зациклилась навсегда.
+        database.update_user(message.from_user.id, in_hunt=0, monster_json=None)
+        raise
 
 
 @router.message(Nav.hunt, F.text == "🔎 Рыскать по дну")
