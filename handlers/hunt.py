@@ -8,11 +8,11 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 import database
-from data import SPECIAL_MUTATIONS, GUARD_CAMP_INTERVAL
+from data import SPECIAL_MUTATIONS
 from game_logic import (
     get_effective_stats, next_monster_meters, roll_monster, is_guard_camp_meter,
     roll_guard_camp, player_attack, monster_attack, gold_reward, apply_idle_regen,
-    defeat_knockback_meters, get_depth_zone_name, roll_kill_resource,
+    defeat_knockback_meters, roll_kill_resource,
 )
 from keyboards import hunt_kb
 from states import Nav
@@ -61,14 +61,21 @@ def _render_camp(user_cur_hp, stats_max_hp, camp, last_line=None):
     return text, InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
 
 
-async def _edit_battle(message_or_bot, chat_id, message_id, text, reply_markup=None):
+async def _push_battle_update(message, user_id, message_id, text, reply_markup=None):
+    """Обновляет боевой экран. Сначала пробует отредактировать существующее
+    сообщение; если Telegram отклонил правку (флуд-контроль при частых тапах,
+    сообщение устарело/удалено и т.п.) — просто шлёт новое сообщение вместо
+    того, чтобы молча падать (из-за чего раньше бой мог 'зависать' без ответа).
+    Возвращает актуальный message_id боевого экрана."""
     try:
-        await message_or_bot.edit_message_text(
-            chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup
+        await message.bot.edit_message_text(
+            chat_id=message.chat.id, message_id=message_id, text=text, reply_markup=reply_markup
         )
-        return True
+        return message_id
     except Exception:
-        return False
+        sent = await message.answer(text, reply_markup=reply_markup)
+        database.update_user(user_id, battle_message_id=sent.message_id)
+        return sent.message_id
 
 
 @router.message(Nav.hunt, F.text == "🔎 Рыскать по дну")
@@ -89,17 +96,21 @@ async def search_enemy(message: Message, state: FSMContext):
 
     if is_guard_camp_meter(user["cur_meters"], new_meters):
         guards = roll_guard_camp(new_meters)
-        monster_json = json.dumps({
+        camp = {
             "is_camp": True, "meters": new_meters, "guards": guards,
             "defeated": [False, False, False], "current": 0,
-        })
-        text, ikb = _render_camp(healed_hp, stats["max_hp"], json.loads(monster_json))
+        }
+        monster_json = json.dumps(camp)
+        text, ikb = _render_camp(healed_hp, stats["max_hp"], camp)
     else:
         monster = roll_monster(new_meters)
         monster["meters"] = new_meters
         monster_json = json.dumps(monster)
         text, ikb = _render_single(healed_hp, stats["max_hp"], monster), None
 
+    # Сначала обновляем нижнюю клавиатуру (Атака/Отступить) — это отдельное
+    # сообщение по требованию Telegram (нельзя одновременно сменить reply-клавиатуру
+    # и прикрепить инлайн-кнопки к одному сообщению).
     sent = await message.answer(text, reply_markup=hunt_kb(True))
     database.update_user(
         message.from_user.id,
@@ -107,9 +118,7 @@ async def search_enemy(message: Message, state: FSMContext):
         last_hp_regen_ts=now, battle_message_id=sent.message_id,
     )
     if ikb:
-        await message.bot.edit_message_text(
-            chat_id=message.chat.id, message_id=sent.message_id, text=text, reply_markup=ikb
-        )
+        await _push_battle_update(message, message.from_user.id, sent.message_id, text, ikb)
 
 
 @router.callback_query(F.data.startswith("pick_guard_"))
@@ -131,11 +140,15 @@ async def pick_guard(call: CallbackQuery):
     stats = get_effective_stats(user, stones, mutations)
     text, ikb = _render_camp(user["cur_hp"], stats["max_hp"], camp)
     await call.answer()
-    await call.message.edit_text(text, reply_markup=ikb)
+    try:
+        await call.message.edit_text(text, reply_markup=ikb)
+    except Exception:
+        sent = await call.message.answer(text, reply_markup=ikb)
+        database.update_user(call.from_user.id, battle_message_id=sent.message_id)
 
 
 def _do_combat_round(target, stats, specials, log):
-    """Одна серия ударов игрока по target (моб или страж). Возвращает был_ли_крит."""
+    """Одна серия ударов игрока по target (моб или страж). Возвращает исцеление от вампиризма."""
     def do_hit(force_crit=False):
         dmg, is_crit, missed = player_attack(stats, monster_evasion=target["evasion"], force_crit=force_crit)
         if missed:
@@ -194,7 +207,6 @@ async def attack(message: Message, state: FSMContext):
     cur_hp = min(stats["max_hp"], cur_hp + heal)
 
     if target["hp"] <= 0:
-        # цель повержена
         resource = roll_kill_resource()
         if is_camp:
             data["defeated"][data["current"]] = True
@@ -208,11 +220,8 @@ async def attack(message: Message, state: FSMContext):
                 )
                 if not applied:
                     return
-                await message.bot.edit_message_text(
-                    chat_id=message.chat.id, message_id=user["battle_message_id"], text=text, reply_markup=ikb
-                )
+                await _push_battle_update(message, message.from_user.id, user["battle_message_id"], text, ikb)
                 return
-            # все стражи повержены — награда
             total_gold = sum(gold_reward(g, stats, user) for g in data["guards"])
             new_max_meters = max(user["max_meters"], data["meters"])
             applied = database.try_apply_attack_result(
@@ -228,11 +237,10 @@ async def attack(message: Message, state: FSMContext):
             if resource:
                 database.add_resource(message.from_user.id, resource)
             final_text = "🏆 <b>Засада зачищена!</b>\n" + "\n".join(log) + f"\n\n💰 Получено золота за всех троих: {total_gold}"
-            await message.bot.edit_message_text(chat_id=message.chat.id, message_id=user["battle_message_id"], text=final_text)
+            await _push_battle_update(message, message.from_user.id, user["battle_message_id"], final_text)
             await message.answer("Готов к новому рысканью по дну.", reply_markup=hunt_kb(False))
             return
 
-        # обычный моб повержен
         gold = gold_reward(data, stats, user)
         new_max_meters = max(user["max_meters"], data["meters"])
         applied = database.try_apply_attack_result(
@@ -248,11 +256,10 @@ async def attack(message: Message, state: FSMContext):
         if resource:
             database.add_resource(message.from_user.id, resource)
         final_text = "🏆 <b>Победа!</b>\n" + "\n".join(log) + f"\n\n💰 Золото: {gold}"
-        await message.bot.edit_message_text(chat_id=message.chat.id, message_id=user["battle_message_id"], text=final_text)
+        await _push_battle_update(message, message.from_user.id, user["battle_message_id"], final_text)
         await message.answer("Готов к новому рысканью по дну.", reply_markup=hunt_kb(False))
         return
 
-    # цель жива — она бьёт в ответ
     mdmg, dodged = monster_attack(target, stats)
     camouflage_triggered = False
     if not dodged and "camouflage" in specials and random.random() * 100 < SPECIAL_MUTATIONS["camouflage"]["chance"]:
@@ -268,7 +275,7 @@ async def attack(message: Message, state: FSMContext):
 
     if new_hp <= 0:
         knock_to = defeat_knockback_meters(user["cur_meters"])
-        recovered_hp = stats["max_hp"]  # поражение лечит полностью — единственная цена смерти это откат по дистанции
+        recovered_hp = stats["max_hp"]
         applied = database.try_apply_attack_result(
             message.from_user.id, original_monster_json,
             in_hunt=0, monster_json=None, cur_hp=recovered_hp,
@@ -281,7 +288,7 @@ async def attack(message: Message, state: FSMContext):
             f"назад до {knock_to} м.\nПрочность восстановлена полностью — можешь пробовать снова прямо сейчас.\n\n"
             + last_line
         )
-        await message.bot.edit_message_text(chat_id=message.chat.id, message_id=user["battle_message_id"], text=final_text)
+        await _push_battle_update(message, message.from_user.id, user["battle_message_id"], final_text)
         await message.answer("Можешь продолжать рыскать по дну.", reply_markup=hunt_kb(False))
         return
 
@@ -296,9 +303,7 @@ async def attack(message: Message, state: FSMContext):
     )
     if not applied:
         return
-    await message.bot.edit_message_text(
-        chat_id=message.chat.id, message_id=user["battle_message_id"], text=text, reply_markup=ikb
-    )
+    await _push_battle_update(message, message.from_user.id, user["battle_message_id"], text, ikb)
 
 
 @router.message(Nav.hunt, F.text == "🏃 Отступить")

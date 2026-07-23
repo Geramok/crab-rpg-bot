@@ -8,7 +8,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 import database
-from data import CRABS, MUTATION_SLOT_NAMES, SPECIAL_MUTATIONS, STAT_LABELS
+from data import CRABS, SPECIAL_MUTATIONS, STAT_LABELS
 from game_logic import get_effective_stats, get_mutation_variant, level_up_cost, get_depth_zone_name
 from keyboards import profile_kb, kb, BACK, other_profile_kb
 from states import Nav
@@ -123,8 +123,7 @@ def _characteristics_text_and_kb(user_id):
 
 async def show_characteristics(message: Message):
     text, ikb = _characteristics_text_and_kb(message.from_user.id)
-    await message.answer(text, reply_markup=kb([BACK]))
-    await message.answer("Действие:", reply_markup=ikb)
+    await message.answer(text, reply_markup=ikb)
 
 
 @router.callback_query(F.data == "level_up")

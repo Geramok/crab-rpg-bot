@@ -10,14 +10,15 @@ from data import (
     HELP_PAGES, MYTHIC_EVENT_UNLOCK_MOLTS, MYTHIC_EVENT_UNLOCK_MAX_METERS, MYTHIC_EVENT_UNLOCK_KILLS,
 )
 from game_logic import mythic_events_unlocked, get_depth_zone_name
-from keyboards import kb, BACK, misc_kb, help_pagination_kb
+from keyboards import kb, BACK, help_pagination_kb
 from states import Nav
 
 router = Router()
 
 
 @router.message(Nav.misc, F.text == "🏆 Топ")
-async def show_top(message: Message):
+async def show_top(message: Message, state: FSMContext):
+    await state.set_state(Nav.misc_detail)
     top = database.get_top_players(10)
     text = "🏆 <b>Топ игроков</b>\n\n"
     if not top:
@@ -30,10 +31,12 @@ async def show_top(message: Message):
 
 
 @router.message(Nav.misc, F.text == "❓ Помощь")
-async def show_help(message: Message):
+async def show_help(message: Message, state: FSMContext):
+    await state.set_state(Nav.misc_detail)
     title, text = HELP_PAGES[0]
-    await message.answer(f"<b>{title}</b>\n\n{text}", reply_markup=kb([BACK]))
-    await message.answer("Листай страницы:", reply_markup=help_pagination_kb(0, len(HELP_PAGES)))
+    await message.answer(
+        f"<b>{title}</b>\n\n{text}", reply_markup=help_pagination_kb(0, len(HELP_PAGES))
+    )
 
 
 @router.callback_query(F.data.startswith("help_page_"))
@@ -50,7 +53,8 @@ async def help_page(call: CallbackQuery):
 
 
 @router.message(Nav.misc, F.text == "📈 Статистика")
-async def show_stats(message: Message):
+async def show_stats(message: Message, state: FSMContext):
+    await state.set_state(Nav.misc_detail)
     user = database.get_user(message.from_user.id)
     text = (
         f"📈 <b>Статистика за всё время</b>\n\n"
@@ -112,8 +116,7 @@ async def show_events(message: Message, state: FSMContext):
     ikb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="⚔️ Атаковать босса", callback_data=f"boss_attack_{event['id']}")
     ]])
-    await message.answer(text, reply_markup=kb([BACK]))
-    await message.answer("Действие:", reply_markup=ikb)
+    await message.answer(text, reply_markup=ikb)
 
 
 @router.callback_query(F.data.startswith("boss_attack_"))

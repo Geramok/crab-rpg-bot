@@ -15,8 +15,8 @@ from states import Nav
 router = Router()
 
 SHELL_ITEMS = {
-    "shell_speed_dig": {"title": "⏩ Ускорить копание", "shells": 3},
-    "shell_resource_pack": {"title": "🎁 Набор ресурсов для крафта", "shells": 5},
+    "speed_dig": {"title": "⏩ Ускорить копание", "shells": 3},
+    "resource_pack": {"title": "🎁 Набор ресурсов для крафта", "shells": 5},
 }
 
 
@@ -101,7 +101,7 @@ async def buy_star_item(call, state: FSMContext):
 
 @router.callback_query(F.data.startswith("buy_shell_"))
 async def buy_shell_item(call):
-    key = call.data.replace("buy_shell_", "shell_")
+    key = call.data.split("buy_shell_", 1)[1]
     item = SHELL_ITEMS.get(key)
     if not item:
         await call.answer()
@@ -111,7 +111,7 @@ async def buy_shell_item(call):
         await call.answer(f"Не хватает раковин! Нужно {item['shells']} 🐚.", show_alert=True)
         return
 
-    if key == "shell_speed_dig":
+    if key == "speed_dig":
         if not user["dig_start_ts"]:
             await call.answer("Копание сейчас не идёт.", show_alert=True)
             return
@@ -124,7 +124,7 @@ async def buy_shell_item(call):
         await call.answer("Копание завершено! Иди забирай добычу.", show_alert=True)
         return
 
-    if key == "shell_resource_pack":
+    if key == "resource_pack":
         spent = database.try_spend(call.from_user.id, "nautilus_shells", item["shells"])
         if not spent:
             await call.answer("Не успел — попробуй снова.", show_alert=True)

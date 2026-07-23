@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 
 from keyboards import (
     BACK, main_menu_kb, hunt_kb, mutations_root_kb, menu_root_kb,
-    profile_kb, misc_kb,
+    misc_kb,
 )
 from states import Nav, PARENT_STATE
 
@@ -88,6 +88,15 @@ async def open_misc(message: Message, state: FSMContext):
 
 @router.message(F.text == BACK)
 async def go_back(message: Message, state: FSMContext):
+    import database
+    user = database.get_user(message.from_user.id)
+    if not user or not user["crab_type"]:
+        # Пользователь ещё не завершил выбор краба (или это вообще не
+        # зарегистрированный игрок) — на этом этапе кнопки "Назад" не должно
+        # быть в принципе. Если текст всё же пришёл (например, набран вручную),
+        # просто не даём сломать прогресс переходом в игровое меню без краба.
+        return
+
     cur = await state.get_state()
     parent = PARENT_STATE.get(cur, Nav.main)
     await state.set_state(parent)

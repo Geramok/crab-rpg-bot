@@ -2,13 +2,13 @@
 import re
 
 from aiogram import Router, F
-from aiogram.filters import CommandStart
-from aiogram.types import Message
+from aiogram.filters import CommandStart, StateFilter
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 import database
 from data import CRABS, INTRO_TEXT, HELP_PAGES
-from keyboards import intro_kb, crab_choice_kb, main_menu_kb
+from keyboards import intro_kb, crab_choice_kb, main_menu_kb, help_pagination_kb
 from states import Nav
 
 router = Router()
@@ -50,7 +50,20 @@ async def show_tutorial(message: Message, state: FSMContext):
     if cur is not None:
         return
     title, text = HELP_PAGES[0]
-    await message.answer(f"<b>{title}</b>\n\n{text}", reply_markup=intro_kb())
+    await message.answer(f"<b>{title}</b>\n\n{text}", reply_markup=help_pagination_kb(0, len(HELP_PAGES)))
+
+
+@router.callback_query(StateFilter(None), F.data.startswith("help_page_"))
+async def tutorial_page(call: CallbackQuery, state: FSMContext):
+    page = int(call.data.split("_")[-1])
+    if not (0 <= page < len(HELP_PAGES)):
+        await call.answer()
+        return
+    title, text = HELP_PAGES[page]
+    await call.answer()
+    await call.message.edit_text(
+        f"<b>{title}</b>\n\n{text}", reply_markup=help_pagination_kb(page, len(HELP_PAGES))
+    )
 
 
 @router.message(F.text == "▶️ Начать игру")
