@@ -29,10 +29,10 @@ CRABS = {
 DEPTH_ZONES = [
     (0, "🏖️ Берег"),
     (50, "🌊 Мелководье"),
-    (200, "🐟 Риф"),
+    (200, "🪸 Риф"),
     (500, "🌑 Сумеречная зона"),
-    (1000, "⚫ Бездна"),
-    (2500, "🔥 Адские глубины"),
+    (1000, "🌀 Бездна"),
+    (2500, "🎇 Адские глубины"),
     (5000, "👑 Тронный зал древних"),
 ]
 
@@ -47,7 +47,7 @@ MONSTERS = [
     {"key": "common_fish", "name": "🐟 Обычная рыба", "min_meters": 0,
      "hp_mult": 1.0, "dmg_mult": 1.0, "gold_mult": 1.0, "evasion": 5,
      "art": " ><(((º> "},
-    {"key": "eel", "name": "🐍 Морской угорь", "min_meters": 0,
+    {"key": "eel", "name": "🐍 Морской угорь", "min_meters": 50,
      "hp_mult": 0.8, "dmg_mult": 0.5, "gold_mult": 0.9, "evasion": 18,
      "art": "~~~<º)))彡~~~"},
     {"key": "stonefish", "name": "🪨 Рыба-камень", "min_meters": 0,
@@ -77,7 +77,7 @@ MONSTERS = [
     {"key": "sea_serpent", "name": "🐉 Морской змей", "min_meters": 150,
      "hp_mult": 1.4, "dmg_mult": 1.6, "gold_mult": 1.4, "evasion": 8,
      "art": "~~<())><\n  ~~~~~~ "},
-    {"key": "flying_fish", "name": "🐦 Летучая рыба", "min_meters": 0,
+    {"key": "flying_fish", "name": "🐦 Летучая рыба", "min_meters": 100,
      "hp_mult": 0.5, "dmg_mult": 0.3, "gold_mult": 0.7, "evasion": 15,
      "art": " >--(°)--<"},
     {"key": "nurse_shark", "name": "🦈 Акула-нянька", "min_meters": 100,
@@ -129,7 +129,7 @@ SHORES = {1: "🏖️ Песчаный берег", 2: "🪨 Скалистый 
 
 # ---------- МУТАЦИИ (постоянные, покупаются за очки ДНК после линьки) ----------
 MUTATION_SLOT_NAMES = {
-    "legs": "🦵 Ноги",
+    "legs": "🐾 Ноги",
     "shell": "🛡️ Панцирь",
     "claws": "✂️ Клешни",
 }
@@ -140,7 +140,7 @@ MUTATION_VARIANTS = {
         {"key": "stone_leg", "name": "🪨 Каменная нога",
          "buff_stat": "max_hp", "buff_per_level": 14,
          "debuff_stat": "evasion", "debuff_per_level": 2},
-        {"key": "mercury_leg", "name": "💧 Ртутная нога",
+        {"key": "mercury_leg", "name": "🔘 Ртутная нога",
          "buff_stat": "evasion", "buff_per_level": 3,
          "debuff_stat": "damage", "debuff_per_level": 1},
         {"key": "coral_leg", "name": "🪸 Коралловая нога",
@@ -159,7 +159,7 @@ MUTATION_VARIANTS = {
          "debuff_stat": "max_hp", "debuff_per_level": 5},
     ],
     "shell": [
-        {"key": "obsidian_shell", "name": "⚫ Обсидиановый панцирь",
+        {"key": "obsidian_shell", "name": "🌋 Обсидиановый панцирь",
          "buff_stat": "max_hp", "buff_per_level": 16,
          "debuff_stat": "luck", "debuff_per_level": 1.5},
         {"key": "pearl_shell", "name": "🦪 Жемчужный панцирь",
@@ -181,8 +181,8 @@ SPECIAL_MUTATIONS = {
                "desc": "25% шанс отравить врага: 3 хода подряд дополнительный урон."},
     "puncture": {"name": "🗡️ Прокол", "chance": 15,
                  "desc": "15% шанс на гарантированный крит независимо от крит. шанса."},
-    "vampirism": {"name": "🩸 Вампиризм", "percent": 15,
-                  "desc": "15% нанесённого урона превращается в восстановленную прочность."},
+    "vampirism": {"name": "🩸 Вампиризм", "percent": 25,
+                  "desc": "25% нанесённого урона превращается в восстановленную прочность."},
     "camouflage": {"name": "🌊 Маскировка", "chance": 20,
                    "desc": "20% шанс полностью избежать ответного удара врага (сверх уклонения)."},
     "greed": {"name": "🪙 Жадность", "chance": 20,
