@@ -68,7 +68,7 @@ def _base_monster_numbers(meters):
 
 
 def eligible_monsters(meters):
-    pool = [m for m in MONSTERS if m["min_meters"] <= meters]
+    pool = [m for m in MONSTERS if m["min_meters"] <= meters and meters <= m.get("max_meters", float('inf'))]
     return pool or [MONSTERS[0]]
 
 
