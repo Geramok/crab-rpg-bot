@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import html
 import json
 import random
 import time
@@ -105,7 +106,7 @@ def _abilities_buttons(abilities, crab_type):
 def _render_single(user_cur_hp, stats_max_hp, monster, crab_type, last_line=None):
     abilities = _get_abilities(monster)
     text = (
-        f"<pre>{monster['art']}</pre>\n"
+        f"<pre>{html.escape(monster['art'])}</pre>\n"
         f"<b>{monster['name']}</b>\n"
         f"❤️ Враг:  [{_hp_bar(monster['hp'], monster['max_hp'])}] {max(monster['hp'],0)}/{monster['max_hp']}\n"
         f"🦀 Ты:    [{_hp_bar(user_cur_hp, stats_max_hp)}] {max(user_cur_hp,0)}/{stats_max_hp}\n"
@@ -131,7 +132,7 @@ def _render_camp(user_cur_hp, stats_max_hp, camp, crab_type, last_line=None):
             btn_text = f"🎯 {'Бить' if i == camp['current'] else 'Переключиться на'}: {guard['name']}"
             buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"pick_guard_{i}")])
     current_guard = camp["guards"][camp["current"]]
-    text += f"\n<pre>{current_guard['art']}</pre>\n"
+    text += f"\n<pre>{html.escape(current_guard['art'])}</pre>\n"
     text += f"🦀 Ты: [{_hp_bar(user_cur_hp, stats_max_hp)}] {max(user_cur_hp,0)}/{stats_max_hp}\n"
     ab_status = _abilities_status_line(abilities, crab_type)
     if ab_status:
