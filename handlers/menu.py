@@ -82,7 +82,7 @@ async def open_misc(message: Message, state: FSMContext):
 @router.message(F.text == BACK)
 async def go_back(message: Message, state: FSMContext):
     import database
-    user = database.get_user(message.from_user.id)
+    user = await database.run_async(database.get_user, message.from_user.id)
     if not user or not user["crab_type"]:
         # Пользователь ещё не завершил выбор краба (или это вообще не
         # зарегистрированный игрок) — на этом этапе кнопки "Назад" не должно

@@ -20,7 +20,7 @@ class EnsureUserMiddleware(BaseMiddleware):
         if user_id is not None and state is not None:
             cur_state = await state.get_state()
             if cur_state is not None:
-                user = database.get_user(user_id)
+                user = await database.run_async(database.get_user, user_id)
                 if user is None:
                     await state.clear()
                     text = (

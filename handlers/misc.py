@@ -19,7 +19,7 @@ router = Router()
 @router.message(Nav.misc, F.text == "🏆 Топ")
 async def show_top(message: Message, state: FSMContext):
     await state.set_state(Nav.misc_detail)
-    top = database.get_top_players(10)
+    top = await database.run_async(database.get_top_players, 10)
     text = "🏆 <b>Топ игроков</b>\n\n"
     if not top:
         text += "Пока пусто."
@@ -54,7 +54,7 @@ async def help_page(call: CallbackQuery):
 @router.message(Nav.misc, F.text == "📈 Статистика")
 async def show_stats(message: Message, state: FSMContext):
     await state.set_state(Nav.misc_detail)
-    user = database.get_user(message.from_user.id)
+    user = await database.run_async(database.get_user, message.from_user.id)
     text = (
         f"📈 <b>Статистика за всё время</b>\n\n"
         f"Всего заработано золота: {user['total_earned_gold']}\n"
@@ -70,7 +70,7 @@ async def show_stats(message: Message, state: FSMContext):
 @router.message(Nav.misc, F.text == "🐉 Ивенты")
 async def show_events(message: Message, state: FSMContext):
     await state.set_state(Nav.events)
-    user = database.get_user(message.from_user.id)
+    user = await database.run_async(database.get_user, message.from_user.id)
 
     if not mythic_events_unlocked(user):
         await message.answer(
@@ -83,7 +83,7 @@ async def show_events(message: Message, state: FSMContext):
         )
         return
 
-    event = database.get_active_event()
+    event = await database.run_async(database.get_active_event)
     if not event:
         await message.answer(
             "Сейчас нет активных ивентов с боссами. Они запускаются автоматически — загляни позже! 🌊",
@@ -93,7 +93,7 @@ async def show_events(message: Message, state: FSMContext):
 
     left = event["ends_at"] - int(time.time())
     hours = max(left, 0) // 3600
-    lb = database.get_event_leaderboard(event["id"], 5)
+    lb = await database.run_async(database.get_event_leaderboard, event["id"], 5)
     text = (
         f"🐉 <b>{event['name']}</b>\n\n"
         f"{event['description']}\n\n"
@@ -102,7 +102,7 @@ async def show_events(message: Message, state: FSMContext):
     )
     if lb:
         for i, row in enumerate(lb, 1):
-            u = database.get_user(row["user_id"])
+            u = await database.run_async(database.get_user, row["user_id"])
             name = u["nickname"] if u else row["user_id"]
             text += f"{i}. {name} — {row['damage']} урона\n"
     else:
@@ -123,19 +123,19 @@ async def show_events(message: Message, state: FSMContext):
 async def boss_attack(call: CallbackQuery):
     from game_logic import get_effective_stats, player_attack
 
-    user = database.get_user(call.from_user.id)
+    user = await database.run_async(database.get_user, call.from_user.id)
     if not mythic_events_unlocked(user):
         await call.answer("Ивенты пока недоступны — смотри условия в разделе Ивенты.", show_alert=True)
         return
 
     event_id = int(call.data.split("_")[-1])
-    event = database.get_active_event()
+    event = await database.run_async(database.get_active_event)
     if not event or event["id"] != event_id:
         await call.answer("Ивент уже завершён.", show_alert=True)
         return
 
-    stones = database.get_stones(call.from_user.id)
-    mutations = database.get_mutations(call.from_user.id)
+    stones = await database.run_async(database.get_stones, call.from_user.id)
+    mutations = await database.run_async(database.get_mutations, call.from_user.id)
     stats = get_effective_stats(user, stones, mutations)
     dmg, is_crit, missed = player_attack(stats)
 
@@ -143,6 +143,6 @@ async def boss_attack(call: CallbackQuery):
         await call.answer("💨 Промах!")
         return
 
-    database.add_event_damage(event_id, call.from_user.id, dmg)
+    await database.run_async(database.add_event_damage, event_id, call.from_user.id, dmg)
     crit_txt = " 💥 Крит!" if is_crit else ""
     await call.answer(f"Ты нанёс боссу {dmg} урона!{crit_txt}")

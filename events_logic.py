@@ -17,8 +17,8 @@ MIN_DAMAGE_THRESHOLD = 30  # отсекаем случайные 1 клик ми
 
 
 async def finish_event(bot, event):
-    participants = database.get_all_event_participants(event["id"])
-    database.close_event(event["id"])
+    participants = await database.run_async(database.get_all_event_participants, event["id"])
+    await database.run_async(database.close_event, event["id"])
 
     qualified = [p for p in participants if p["damage"] >= MIN_DAMAGE_THRESHOLD]
 
@@ -28,12 +28,15 @@ async def finish_event(bot, event):
     # Всем, кто реально участвовал, — гарантированная базовая награда (раковины + камень)
     for p in qualified:
         uid = p["user_id"]
-        user = database.get_user(uid)
+        user = await database.run_async(database.get_user, uid)
         if not user:
             continue
-        database.update_user(uid, boss_kills=user["boss_kills"] + 1, nautilus_shells=user["nautilus_shells"] + 2)
+        await database.run_async(
+            database.update_user, uid,
+            boss_kills=user["boss_kills"] + 1, nautilus_shells=user["nautilus_shells"] + 2,
+        )
         color = random.choice(list(STONE_COLORS.keys()))
-        database.add_stone(uid, color, 1, 1)
+        await database.run_async(database.add_stone, uid, color, 1, 1)
 
     # Жемчужные кейсы (особые мутации) — честная лотерея с весом sqrt(урон), чтобы
     # не только топ по урону имел шанс, но и активные игроки послабее
@@ -44,12 +47,12 @@ async def finish_event(bot, event):
 
     results = []
     for uid in winners:
-        user = database.get_user(uid)
+        user = await database.run_async(database.get_user, uid)
         if not user:
             continue
         special = random.choice(list(SPECIAL_MUTATIONS.keys()))
-        database.add_special_mutation(uid, special)
-        database.update_user(uid, nautilus_shells=user["nautilus_shells"] + 5)
+        await database.run_async(database.add_special_mutation, uid, special)
+        await database.run_async(database.update_user, uid, nautilus_shells=user["nautilus_shells"] + 5)
         results.append((uid, special))
 
         try:

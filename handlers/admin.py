@@ -38,10 +38,12 @@ async def start_boss(message: Message):
         return
 
     name, description = tail.split("|", 1)
-    if database.get_active_event():
+    if await database.run_async(database.get_active_event):
         await message.answer("Уже есть активный ивент. Сначала заверши его через /endboss.")
         return
-    event_id = database.create_event(name.strip(), description.strip(), int(hours * 3600))
+    event_id = await database.run_async(
+        database.create_event, name.strip(), description.strip(), int(hours * 3600)
+    )
     await message.answer(f"Ивент «{name.strip()}» запущен на {hours} ч. (id={event_id})")
 
 
@@ -49,7 +51,7 @@ async def start_boss(message: Message):
 async def end_boss(message: Message):
     if not _is_admin(message.from_user.id):
         return
-    event = database.get_active_event()
+    event = await database.run_async(database.get_active_event)
     if not event:
         await message.answer("Нет активного ивента.")
         return
@@ -64,7 +66,7 @@ async def end_boss(message: Message):
 
     lines = [f"Ивент «{event['name']}» завершён. Жемчужные кейсы выпали:"]
     for uid, special in results:
-        user = database.get_user(uid)
+        user = await database.run_async(database.get_user, uid)
         name = user["nickname"] if user else uid
         lines.append(f"— {name}: получена мутация")
     await message.answer("\n".join(lines))

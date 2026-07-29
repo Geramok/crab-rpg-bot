@@ -26,7 +26,7 @@ def _molt_confirm_kb():
 
 @router.message(Nav.mutations_root, F.text == "🧬 Линька")
 async def molt_request(message: Message, state: FSMContext):
-    user = database.get_user(message.from_user.id)
+    user = await database.run_async(database.get_user, message.from_user.id)
     required = molt_required_level(user["molts"])
     if user["crab_level"] < required:
         await message.answer(
@@ -51,14 +51,15 @@ async def molt_request(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "molt_confirm")
 async def molt_confirm(call: CallbackQuery, state: FSMContext):
-    user = database.get_user(call.from_user.id)
+    user = await database.run_async(database.get_user, call.from_user.id)
     required = molt_required_level(user["molts"])
     if user["crab_level"] < required:
         await call.answer("Условие для линьки больше не выполняется.", show_alert=True)
         return
 
     gain = apply_permanent_boost(dna_points_for_molt(user["molts"], user["crab_level"]), user)
-    database.update_user(
+    await database.run_async(
+        database.update_user,
         call.from_user.id,
         crab_level=1,
         gold=0,
@@ -101,9 +102,9 @@ def _variant_line(slot, m):
     )
 
 
-def _mutations_shop_text_and_kb(user_id):
-    user = database.get_user(user_id)
-    mutations = database.get_mutations(user_id)
+async def _mutations_shop_text_and_kb(user_id):
+    user = await database.run_async(database.get_user, user_id)
+    mutations = await database.run_async(database.get_mutations, user_id)
     total_levels = sum(m["level"] for m in mutations.values())
 
     text = f"🧪 <b>Мутации — артефакты со случайными статами</b>\nОчки ДНК: {user['dna_points']} 🧬\n\n"
@@ -137,7 +138,7 @@ def _mutations_shop_text_and_kb(user_id):
 @router.message(Nav.mutations_root, F.text == "🧪 Мутации")
 async def open_mutations_shop(message: Message, state: FSMContext):
     await state.set_state(Nav.mutations_shop)
-    text, ikb = _mutations_shop_text_and_kb(message.from_user.id)
+    text, ikb = await _mutations_shop_text_and_kb(message.from_user.id)
     await message.answer(text, reply_markup=kb([BACK]))
     await message.answer("Выбери действие:", reply_markup=ikb)
 
@@ -154,8 +155,8 @@ async def buy_mutation_random(call: CallbackQuery, state: FSMContext):
     slot = random.choice(list(MUTATION_SLOT_NAMES.keys()))
     slot_name = MUTATION_SLOT_NAMES[slot]
 
-    user = database.get_user(call.from_user.id)
-    mutations = database.get_mutations(call.from_user.id)
+    user = await database.run_async(database.get_user, call.from_user.id)
+    mutations = await database.run_async(database.get_mutations, call.from_user.id)
     total_levels = sum(m["level"] for m in mutations.values())
     m = mutations.get(slot, {"level": 0, "equipped": 0, "variant_key": None})
     cost = mutation_cost(slot, m["level"] + 1, total_levels)
@@ -167,23 +168,26 @@ async def buy_mutation_random(call: CallbackQuery, state: FSMContext):
         )
         return
 
-    spent = database.try_spend(call.from_user.id, "dna_points", cost)
+    spent = await database.run_async(database.try_spend, call.from_user.id, "dna_points", cost)
     if not spent:
         await call.answer("Не успел — баланс уже изменился, попробуй ещё раз.", show_alert=True)
-        text, ikb = _mutations_shop_text_and_kb(call.from_user.id)
+        text, ikb = await _mutations_shop_text_and_kb(call.from_user.id)
         await call.message.edit_text(text, reply_markup=ikb)
         return
 
     is_first_purchase = m["level"] == 0
     if is_first_purchase:
         variant = roll_mutation_variant(slot)
-        database.set_mutation(call.from_user.id, slot, level=1, variant_key=variant["key"], equipped=1)
+        await database.run_async(
+            database.set_mutation, call.from_user.id, slot,
+            level=1, variant_key=variant["key"], equipped=1,
+        )
         await call.answer(f"🎲 {slot_name}! Выпал артефакт: {variant['name']}!", show_alert=True)
     else:
-        database.set_mutation(call.from_user.id, slot, level=m["level"] + 1)
+        await database.run_async(database.set_mutation, call.from_user.id, slot, level=m["level"] + 1)
         await call.answer(f"🎲 {slot_name}! Артефакт улучшен до уровня {m['level'] + 1}.", show_alert=True)
 
-    text, ikb = _mutations_shop_text_and_kb(call.from_user.id)
+    text, ikb = await _mutations_shop_text_and_kb(call.from_user.id)
     await call.message.edit_text(text, reply_markup=ikb)
 
 
@@ -193,13 +197,13 @@ async def toggle_mutation(call: CallbackQuery, state: FSMContext):
     if slot not in MUTATION_SLOT_NAMES:
         await call.answer()
         return
-    mutations = database.get_mutations(call.from_user.id)
+    mutations = await database.run_async(database.get_mutations, call.from_user.id)
     m = mutations.get(slot, {"level": 0, "equipped": 0})
     if m["level"] <= 0:
         await call.answer("Сначала купи эту мутацию.", show_alert=True)
         return
-    database.set_mutation(call.from_user.id, slot, equipped=not m["equipped"])
+    await database.run_async(database.set_mutation, call.from_user.id, slot, equipped=not m["equipped"])
     await call.answer("Готово!")
 
-    text, ikb = _mutations_shop_text_and_kb(call.from_user.id)
+    text, ikb = await _mutations_shop_text_and_kb(call.from_user.id)
     await call.message.edit_text(text, reply_markup=ikb)

@@ -13,11 +13,11 @@ router = Router()
 
 
 async def show_inventory(message: Message):
-    user = database.get_user(message.from_user.id)
-    stones = database.get_stones(message.from_user.id)
-    mutations = database.get_mutations(message.from_user.id)
-    special = database.get_special_mutations(message.from_user.id)
-    resources = database.get_resources(message.from_user.id)
+    user = await database.run_async(database.get_user, message.from_user.id)
+    stones = await database.run_async(database.get_stones, message.from_user.id)
+    mutations = await database.run_async(database.get_mutations, message.from_user.id)
+    special = await database.run_async(database.get_special_mutations, message.from_user.id)
+    resources = await database.run_async(database.get_resources, message.from_user.id)
 
     text = f"🐚 <b>Нора</b>\n\n💰{user['gold']} 🧬{user['dna_points']} 🐚{user['nautilus_shells']}\n\n"
 

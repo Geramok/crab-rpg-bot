@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import asyncio
 import os
 import sqlite3
 import time
@@ -7,6 +8,18 @@ from contextlib import closing
 from config import DB_PATH
 
 _wal_enabled = False
+
+
+async def run_async(func, *args, **kwargs):
+    """Выполняет синхронный вызов к SQLite в отдельном потоке (через
+    asyncio.to_thread), не блокируя event loop бота. Диск (особенно
+    смонтированное сетевое хранилище вроде /data на Amvera) может отвечать
+    заметно медленнее локального — раньше КАЖДЫЙ такой вызов делался прямо
+    в хендлере и на время своего выполнения останавливал обработку ВСЕХ
+    остальных апдейтов бота (сообщения других игроков, ответы Telegram и
+    т.д.). Теперь медленный диск тормозит только конкретное действие
+    конкретного игрока, а не весь бот целиком."""
+    return await asyncio.to_thread(func, *args, **kwargs)
 
 # На Amvera путь БД лежит в постоянном хранилище (например /data/crab_game.db).
 # Директория обычно уже существует (это точка монтирования), но на всякий

@@ -17,7 +17,7 @@ async def events_scheduler_loop(bot):
     ивента нет — запускает случайный мифический ивент сам, без участия админа."""
     while True:
         try:
-            event = database.get_active_event()
+            event = await database.run_async(database.get_active_event)
             now = int(time.time())
 
             if event and event["ends_at"] <= now:
@@ -27,7 +27,8 @@ async def events_scheduler_loop(bot):
 
             if not event:
                 template = random.choice(MYTHIC_EVENTS)
-                event_id = database.create_event(
+                event_id = await database.run_async(
+                    database.create_event,
                     template["name"], template["description"],
                     MYTHIC_EVENT_DURATION_HOURS * 3600,
                 )

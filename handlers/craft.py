@@ -11,9 +11,9 @@ from keyboards import kb, BACK
 router = Router()
 
 
-def _craft_text_and_kb(user_id):
-    resources = database.get_resources(user_id)
-    user = database.get_user(user_id)
+async def _craft_text_and_kb(user_id):
+    resources = await database.run_async(database.get_resources, user_id)
+    user = await database.run_async(database.get_user, user_id)
 
     text = "🍯 <b>Нектар силы</b>\n\n<b>Рецепт:</b>\n"
     for key, need in NECTAR_RECIPE.items():
@@ -35,24 +35,25 @@ def _craft_text_and_kb(user_id):
 
 
 async def show_craft(message: Message):
-    text, ikb = _craft_text_and_kb(message.from_user.id)
+    text, ikb = await _craft_text_and_kb(message.from_user.id)
     await message.answer(text, reply_markup=kb([BACK]))
     await message.answer("Готов скрафтить?", reply_markup=ikb)
 
 
 @router.callback_query(F.data == "craft_nectar")
 async def craft_nectar(call: CallbackQuery):
-    crafted = database.try_craft(call.from_user.id, NECTAR_RECIPE)
+    crafted = await database.run_async(database.try_craft, call.from_user.id, NECTAR_RECIPE)
     if not crafted:
         await call.answer("Не хватает ресурсов для крафта.", show_alert=True)
         return
 
     expires = int(time.time()) + NECTAR_BUFF_DURATION_SECONDS
-    database.update_user(
+    await database.run_async(
+        database.update_user,
         call.from_user.id,
         buff_damage_mult=NECTAR_BUFF_DAMAGE_MULT,
         buff_expires_ts=expires,
     )
     await call.answer("Нектар силы использован! Бафф активен.")
-    text, ikb = _craft_text_and_kb(call.from_user.id)
+    text, ikb = await _craft_text_and_kb(call.from_user.id)
     await call.message.edit_text(text, reply_markup=ikb)

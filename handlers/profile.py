@@ -22,7 +22,7 @@ NICKNAME_PATTERN = re.compile(r"^[a-zA-Zа-яА-ЯёЁ0-9 _\-]{3,16}$")
 
 
 async def show_profile(message: Message):
-    user = database.get_user(message.from_user.id)
+    user = await database.run_async(database.get_user, message.from_user.id)
     zone = get_depth_zone_name(user["max_meters"])
     rank = get_molt_rank(user["molts"])
 
@@ -50,10 +50,10 @@ async def _show_other_profile_text(target_user):
     return text
 
 
-def _characteristics_text_and_kb(user_id):
-    user = database.get_user(user_id)
-    stones = database.get_stones(user_id)
-    mutations = database.get_mutations(user_id)
+async def _characteristics_text_and_kb(user_id):
+    user = await database.run_async(database.get_user, user_id)
+    stones = await database.run_async(database.get_stones, user_id)
+    mutations = await database.run_async(database.get_mutations, user_id)
     stats = get_effective_stats(user, stones, mutations)
     cost = level_up_cost(user["crab_level"], user["molts"])
 
@@ -63,7 +63,7 @@ def _characteristics_text_and_kb(user_id):
             variant = get_mutation_variant(slot, m["variant_key"])
             if variant:
                 mutation_names.append(f"{variant['name']} ({m['level']})")
-    special = database.get_special_mutations(user_id)
+    special = await database.run_async(database.get_special_mutations, user_id)
     mutation_names += [SPECIAL_MUTATIONS[k]["name"] for k, v in special.items() if v["equipped"]]
     mutations_txt = ", ".join(mutation_names) if mutation_names else "нет"
 
@@ -86,29 +86,29 @@ def _characteristics_text_and_kb(user_id):
 
 
 async def show_characteristics(message: Message):
-    text, ikb = _characteristics_text_and_kb(message.from_user.id)
+    text, ikb = await _characteristics_text_and_kb(message.from_user.id)
     await message.answer(text, reply_markup=kb([BACK]))
     await message.answer("Повысить уровень?", reply_markup=ikb)
 
 
 @router.callback_query(F.data == "level_up")
 async def level_up(call: CallbackQuery, state: FSMContext):
-    user = database.get_user(call.from_user.id)
+    user = await database.run_async(database.get_user, call.from_user.id)
     cost = level_up_cost(user["crab_level"], user["molts"])
     if user["gold"] < cost:
         await call.answer(f"Не хватает золота! Нужно {cost} 💰.", show_alert=True)
         return
 
-    spent = database.try_spend(call.from_user.id, "gold", cost)
+    spent = await database.run_async(database.try_spend, call.from_user.id, "gold", cost)
     if not spent:
         await call.answer("Не успел — баланс уже изменился, попробуй ещё раз.", show_alert=True)
         return
-    database.update_user(call.from_user.id, crab_level=user["crab_level"] + 1)
+    await database.run_async(database.update_user, call.from_user.id, crab_level=user["crab_level"] + 1)
     await call.answer("Уровень повышен!")
 
     # редактируем ТО ЖЕ сообщение с полной актуальной сводкой характеристик —
     # видно "изменено" вместо нового сообщения в чате
-    text, ikb = _characteristics_text_and_kb(call.from_user.id)
+    text, ikb = await _characteristics_text_and_kb(call.from_user.id)
     await call.message.edit_text(f"✅ Уровень повышен!\n\n{text}", reply_markup=ikb)
 
 
@@ -116,7 +116,7 @@ async def level_up(call: CallbackQuery, state: FSMContext):
 
 @router.message(Nav.profile, F.text == "✏️ Сменить ник")
 async def change_nick_request(message: Message, state: FSMContext):
-    user = database.get_user(message.from_user.id)
+    user = await database.run_async(database.get_user, message.from_user.id)
     last_change = user["last_nick_change_ts"] or 0
     left = NICK_COOLDOWN_SECONDS - (int(time.time()) - last_change)
     if left > 0:
@@ -140,7 +140,9 @@ async def change_nick_apply(message: Message, state: FSMContext):
             "Символы вроде < > & использовать нельзя. Попробуй ещё раз:"
         )
         return
-    database.update_user(message.from_user.id, nickname=nick, last_nick_change_ts=int(time.time()))
+    await database.run_async(
+        database.update_user, message.from_user.id, nickname=nick, last_nick_change_ts=int(time.time())
+    )
     await state.set_state(Nav.profile)
     await message.answer(f"Готово! Новый ник: {nick}")
     await show_profile(message)
@@ -168,7 +170,7 @@ async def search_player_apply(message: Message, state: FSMContext):
         await state.set_state(Nav.profile)
         await show_profile(message)
         return
-    target = database.find_user_by_nickname(message.text.strip())
+    target = await database.run_async(database.find_user_by_nickname, message.text.strip())
     if not target:
         await message.answer("Игрок с таким ником не найден. Попробуй другой ник:")
         return
@@ -181,7 +183,7 @@ async def search_player_apply(message: Message, state: FSMContext):
 
 @router.message(Nav.profile, F.text == "🎲 Другие игроки")
 async def suggest_players(message: Message, state: FSMContext):
-    players = database.get_random_players(message.from_user.id, limit=4)
+    players = await database.run_async(database.get_random_players, message.from_user.id, limit=4)
     if not players:
         await message.answer("Пока в игре больше никого нет — приглашай друзей! 🦀", reply_markup=profile_kb())
         return
@@ -198,7 +200,7 @@ async def suggest_players(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("view_profile_"))
 async def view_profile_callback(call: CallbackQuery, state: FSMContext):
     target_id = int(call.data.split("_")[-1])
-    target = database.get_user(target_id)
+    target = await database.run_async(database.get_user, target_id)
     if not target:
         await call.answer("Этот игрок пропал из базы.", show_alert=True)
         return

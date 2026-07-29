@@ -27,13 +27,13 @@ def _safe_default_nickname(user_id, username, first_name):
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
-    user = database.get_user(message.from_user.id)
+    user = await database.run_async(database.get_user, message.from_user.id)
     if not user:
         nickname = _safe_default_nickname(
             message.from_user.id, message.from_user.username, message.from_user.first_name
         )
-        database.create_user(message.from_user.id, nickname)
-        user = database.get_user(message.from_user.id)
+        await database.run_async(database.create_user, message.from_user.id, nickname)
+        user = await database.run_async(database.get_user, message.from_user.id)
 
     if user["crab_type"]:
         await state.set_state(Nav.main)
@@ -81,7 +81,7 @@ async def begin_game(message: Message, state: FSMContext):
     cur = await state.get_state()
     if cur is not None:
         return
-    user = database.get_user(message.from_user.id)
+    user = await database.run_async(database.get_user, message.from_user.id)
     if user and user["crab_type"]:
         await state.set_state(Nav.main)
         await message.answer("Продолжаем путь!", reply_markup=main_menu_kb())
@@ -93,9 +93,10 @@ async def begin_game(message: Message, state: FSMContext):
 @router.message(Nav.choose_crab, F.text.in_(NAME_TO_CRAB.keys()))
 async def choose_crab(message: Message, state: FSMContext):
     crab_id = NAME_TO_CRAB[message.text]
-    user = database.get_user(message.from_user.id)
+    user = await database.run_async(database.get_user, message.from_user.id)
     is_remolt = bool(user and user["molts"] > 0)
-    database.update_user(
+    await database.run_async(
+        database.update_user,
         message.from_user.id,
         crab_type=crab_id,
         cur_hp=CRABS[crab_id]["max_hp"],

@@ -14,7 +14,7 @@ router = Router()
 
 
 async def show_dig(message: Message):
-    user = database.get_user(message.from_user.id)
+    user = await database.run_async(database.get_user, message.from_user.id)
     start_ts = user["dig_start_ts"]
     duration = user["dig_duration_seconds"]
     now = int(time.time())
@@ -52,7 +52,7 @@ async def start_dig(call: CallbackQuery):
     if hours not in DIG_DURATION_OPTIONS_HOURS:
         await call.answer()
         return
-    started = database.try_start_dig(call.from_user.id, hours * 3600)
+    started = await database.run_async(database.try_start_dig, call.from_user.id, hours * 3600)
     if not started:
         await call.answer("Копание уже идёт.", show_alert=True)
         return
@@ -62,7 +62,7 @@ async def start_dig(call: CallbackQuery):
 
 @router.callback_query(F.data == "collect_dig")
 async def collect_dig(call: CallbackQuery):
-    user = database.get_user(call.from_user.id)
+    user = await database.run_async(database.get_user, call.from_user.id)
     start_ts = user["dig_start_ts"]
     duration = user["dig_duration_seconds"] or 3600
     now = int(time.time())
@@ -70,7 +70,7 @@ async def collect_dig(call: CallbackQuery):
         await call.answer("Копание ещё не завершено.", show_alert=True)
         return
 
-    collected = database.try_collect_dig(call.from_user.id, start_ts)
+    collected = await database.run_async(database.try_collect_dig, call.from_user.id, start_ts)
     if not collected:
         await call.answer("Уже забрано!", show_alert=True)
         return
@@ -78,11 +78,11 @@ async def collect_dig(call: CallbackQuery):
     hours = duration / 3600
     stone_loot = roll_dig_loot(hours)
     for color, level in stone_loot:
-        database.add_stone(call.from_user.id, color, level, 1)
+        await database.run_async(database.add_stone, call.from_user.id, color, level, 1)
 
     resource_loot = roll_dig_resources(hours)
     for key in resource_loot:
-        database.add_resource(call.from_user.id, key, 1)
+        await database.run_async(database.add_resource, call.from_user.id, key, 1)
 
     lines = ["🎁 <b>Добыча (уже применена/добавлена в инвентарь):</b>"]
     counter = Counter(stone_loot)
