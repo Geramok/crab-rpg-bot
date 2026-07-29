@@ -36,14 +36,14 @@ async def open_menu_root(message: Message, state: FSMContext):
     await message.answer("📋 <b>Меню</b>", reply_markup=menu_root_kb())
 
 
-@router.message(Nav.menu_root, F.text == "👤 Профиль")
+@router.message(Nav.menu_root, F.text == "🦀 Мой краб")
 async def open_profile(message: Message, state: FSMContext):
     from handlers.profile import show_profile
     await state.set_state(Nav.profile)
     await show_profile(message)
 
 
-@router.message(Nav.menu_root, F.text == "📊 Характеристики")
+@router.message(Nav.menu_root, F.text == "⚔️ Мощь")
 async def open_characteristics(message: Message, state: FSMContext):
     from handlers.profile import show_characteristics
     await state.set_state(Nav.characteristics)
@@ -57,14 +57,14 @@ async def open_dig(message: Message, state: FSMContext):
     await show_dig(message)
 
 
-@router.message(Nav.menu_root, F.text == "🎒 Инвентарь")
+@router.message(Nav.menu_root, F.text == "🐚 Нора")
 async def open_inventory(message: Message, state: FSMContext):
     from handlers.inventory import show_inventory
     await state.set_state(Nav.inventory)
     await show_inventory(message)
 
 
-@router.message(Nav.menu_root, F.text == "🍯 Крафт")
+@router.message(Nav.menu_root, F.text == "🍯 Нектар")
 async def open_craft(message: Message, state: FSMContext):
     from handlers.craft import show_craft
     await state.set_state(Nav.craft)

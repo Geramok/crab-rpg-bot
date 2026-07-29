@@ -8,7 +8,7 @@ from data import (
     CRABS, MUTATION_SLOT_BASE_COST, MUTATION_VARIANTS,
     STONE_COLORS, STONE_EFFECT_BONUS, STONE_LEVEL_CHANCE,
     MYTHIC_EVENT_UNLOCK_MOLTS, MYTHIC_EVENT_UNLOCK_MAX_METERS, MYTHIC_EVENT_UNLOCK_KILLS,
-    MONSTERS, DEPTH_ZONES, PLAYER_MISS_CHANCE,
+    MONSTERS, DEPTH_ZONES, MOLT_RANKS, PLAYER_MISS_CHANCE,
     GUARD_CAMP_INTERVAL, GUARD_CAMP_ELITE_MULT,
     DIG_STONES_PER_HOUR, RESOURCE_DROP_CHANCE_KILL, RESOURCE_DROP_CHANCE_DIG, RESOURCES,
     PERMANENT_BOOST_MULT,
@@ -116,6 +116,17 @@ def get_depth_zone_name(meters):
     for threshold, zone_name in DEPTH_ZONES:
         if meters >= threshold:
             name = zone_name
+        else:
+            break
+    return name
+
+
+def get_molt_rank(molts):
+    """Звание по числу пройденных линек - чисто флейвор для профиля."""
+    name = MOLT_RANKS[0][1]
+    for threshold, rank_name in MOLT_RANKS:
+        if molts >= threshold:
+            name = rank_name
         else:
             break
     return name

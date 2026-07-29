@@ -1,15 +1,14 @@
 # -*- coding: utf-8 -*-
 import re
 import time
-from datetime import datetime
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
 import database
-from data import CRABS, SPECIAL_MUTATIONS, STAT_LABELS, SHIELD_ABILITY, MARK_ABILITY, UNIQUE_ABILITIES
-from game_logic import get_effective_stats, get_mutation_variant, level_up_cost, get_depth_zone_name
+from data import CRABS, SPECIAL_MUTATIONS, SHIELD_ABILITY, MARK_ABILITY, UNIQUE_ABILITIES
+from game_logic import get_effective_stats, get_mutation_variant, level_up_cost, get_depth_zone_name, get_molt_rank
 from keyboards import profile_kb, kb, BACK, other_profile_kb
 from states import Nav
 
@@ -22,42 +21,17 @@ NICK_COOLDOWN_SECONDS = 7 * 24 * 60 * 60
 NICKNAME_PATTERN = re.compile(r"^[a-zA-Zа-яА-ЯёЁ0-9 _\-]{3,16}$")
 
 
-def _equipped_mutation_names(user_id):
-    mutations = database.get_mutations(user_id)
-    special = database.get_special_mutations(user_id)
-    names = []
-    for slot, m in mutations.items():
-        if m["equipped"] and m["level"] > 0 and m.get("variant_key"):
-            variant = get_mutation_variant(slot, m["variant_key"])
-            if variant:
-                names.append(f"{variant['name']} (ур. {m['level']})")
-    names += [SPECIAL_MUTATIONS[k]["name"] for k, v in special.items() if v["equipped"]]
-    return names
-
-
 async def show_profile(message: Message):
     user = database.get_user(message.from_user.id)
-    equipped = _equipped_mutation_names(message.from_user.id)
-    equipped_txt = ", ".join(equipped) if equipped else "нет"
-
-    reg_date = datetime.fromtimestamp(user["registered_at"]).strftime("%d.%m.%Y") if user["registered_at"] else "—"
-
     zone = get_depth_zone_name(user["max_meters"])
+    rank = get_molt_rank(user["molts"])
+
     text = (
-        f"👤 <b>Профиль</b>\n\n"
-        f"Ник: {user['nickname']}\n"
-        f"Краб: {CRABS[user['crab_type']]['name']}\n"
-        f"Уровень моря: {zone}\n"
-        f"Уровень краба: {user['crab_level']}\n"
-        f"Линек пройдено: {user['molts']}\n"
-        f"Надетые мутации: {equipped_txt}\n"
-        f"Пройденный путь (рекорд): {user['max_meters']} м\n"
-        f"Баланс золота: {user['gold']} 💰\n"
-        f"Очки ДНК: {user['dna_points']} 🧬\n"
-        f"Убито существ: {user['kills']}\n"
-        f"Убито боссов: {user['boss_kills']}\n"
-        f"Раковин наутилуса: {user['nautilus_shells']}\n"
-        f"Дата регистрации: {reg_date}"
+        f"🦀 <b>{user['nickname']}</b> — {rank}\n"
+        f"{CRABS[user['crab_type']]['name']} · ур. {user['crab_level']} · {user['molts']} линек\n\n"
+        f"📍 {zone} (рекорд {user['max_meters']} м)\n"
+        f"💰 {user['gold']}  🧬 {user['dna_points']}  🐚 {user['nautilus_shells']}\n"
+        f"Убито: {user['kills']} (боссов: {user['boss_kills']})"
     )
     if user["permanent_boost"]:
         text += "\n🌟 Вечный прилив: +15% к золоту и ДНК навсегда"
@@ -65,19 +39,13 @@ async def show_profile(message: Message):
 
 
 async def _show_other_profile_text(target_user):
-    equipped = _equipped_mutation_names(target_user["user_id"])
-    equipped_txt = ", ".join(equipped) if equipped else "нет"
     zone = get_depth_zone_name(target_user["max_meters"])
+    rank = get_molt_rank(target_user["molts"])
     text = (
-        f"👤 <b>Профиль игрока {target_user['nickname']}</b>\n\n"
-        f"Краб: {CRABS[target_user['crab_type']]['name']}\n"
-        f"Уровень моря: {zone}\n"
-        f"Уровень краба: {target_user['crab_level']}\n"
-        f"Линек пройдено: {target_user['molts']}\n"
-        f"Мутации: {equipped_txt}\n"
-        f"Пройденный путь (рекорд): {target_user['max_meters']} м\n"
-        f"Убито существ: {target_user['kills']}\n"
-        f"Убито боссов: {target_user['boss_kills']}"
+        f"🦀 <b>{target_user['nickname']}</b> — {rank}\n"
+        f"{CRABS[target_user['crab_type']]['name']} · ур. {target_user['crab_level']} · {target_user['molts']} линек\n\n"
+        f"📍 {zone} (рекорд {target_user['max_meters']} м)\n"
+        f"Убито: {target_user['kills']} (боссов: {target_user['boss_kills']})"
     )
     return text
 
@@ -89,39 +57,27 @@ def _characteristics_text_and_kb(user_id):
     stats = get_effective_stats(user, stones, mutations)
     cost = level_up_cost(user["crab_level"], user["molts"])
 
-    equipped_lines = []
+    mutation_names = []
     for slot, m in mutations.items():
         if m["equipped"] and m["level"] > 0 and m.get("variant_key"):
             variant = get_mutation_variant(slot, m["variant_key"])
             if variant:
-                buff = variant["buff_per_level"] * m["level"]
-                debuff = variant["debuff_per_level"] * m["level"]
-                equipped_lines.append(
-                    f"{variant['name']} (ур. {m['level']}): +{buff:.1f} {STAT_LABELS[variant['buff_stat']]}, "
-                    f"-{debuff:.1f} {STAT_LABELS[variant['debuff_stat']]}"
-                )
-    mutations_txt = "\n".join(equipped_lines) if equipped_lines else "нет надетых мутаций"
+                mutation_names.append(f"{variant['name']} ({m['level']})")
+    special = database.get_special_mutations(user_id)
+    mutation_names += [SPECIAL_MUTATIONS[k]["name"] for k, v in special.items() if v["equipped"]]
+    mutations_txt = ", ".join(mutation_names) if mutation_names else "нет"
 
     unique = UNIQUE_ABILITIES.get(user["crab_type"], UNIQUE_ABILITIES[1])
-    abilities_txt = (
-        f"{SHIELD_ABILITY['name']} — {SHIELD_ABILITY['desc']}\n"
-        f"{MARK_ABILITY['name']} — {MARK_ABILITY['desc']}\n"
-        f"{unique['name']} (твоя уникальная) — {unique['desc']}"
-    )
+    abilities_txt = f"{SHIELD_ABILITY['name']}, {MARK_ABILITY['name']}"
 
     text = (
-        f"📊 <b>Характеристики</b>\n\n"
-        f"Уровень краба: {user['crab_level']}\n"
-        f"⚔️ Урон: {stats['damage']:.1f}\n"
-        f"🌊 Уклонение: {stats['evasion']:.1f}%\n"
-        f"🍀 Удача: {stats['luck']:.1f}%\n"
-        f"🎯 Крит. шанс: {stats['crit_chance']:.1f}%\n"
-        f"💥 Крит. урон: {stats['crit_damage']:.1f}%\n"
-        f"❤️ Прочность: {stats['max_hp']}\n\n"
-        f"<b>Надетые мутации-артефакты:</b>\n{mutations_txt}\n\n"
-        f"<b>⚡ Боевые способности (кнопки прямо в бою):</b>\n{abilities_txt}\n\n"
-        f"💰 Золото: {user['gold']}\n"
-        f"Повышение уровня стоит: {cost} 💰"
+        f"⚔️ <b>Мощь</b> — ур. {user['crab_level']}\n\n"
+        f"⚔️{stats['damage']:.1f} 🌊{stats['evasion']:.0f}% 🍀{stats['luck']:.0f}% "
+        f"🎯{stats['crit_chance']:.0f}% 💥{stats['crit_damage']:.0f}% ❤️{stats['max_hp']:.0f}\n\n"
+        f"Мутации: {mutations_txt}\n"
+        f"Способности: {abilities_txt}\n"
+        f"Твоя уникальная: {unique['name']} — {unique['desc']}\n\n"
+        f"💰 {user['gold']} · след. уровень: {cost} 💰"
     )
     ikb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=f"⬆️ Повысить уровень ({cost} 💰)", callback_data="level_up")

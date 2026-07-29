@@ -15,16 +15,12 @@ def _craft_text_and_kb(user_id):
     resources = database.get_resources(user_id)
     user = database.get_user(user_id)
 
-    text = "🍯 <b>Крафт — Нектар силы</b>\n\n<b>Рецепт:</b>\n"
+    text = "🍯 <b>Нектар силы</b>\n\n<b>Рецепт:</b>\n"
     for key, need in NECTAR_RECIPE.items():
         have = resources.get(key, 0)
         mark = "✅" if have >= need else "▫️"
         text += f"{mark} {RESOURCES[key]['name']}: {have}/{need}\n"
-    text += (
-        f"\nЭффект: +{round((NECTAR_BUFF_DAMAGE_MULT - 1) * 100)}% урона на "
-        f"{NECTAR_BUFF_DURATION_SECONDS // 60} минут при использовании.\n"
-        f"💡 Ресурсы падают с убийств и копания."
-    )
+    text += f"\nЭффект: +{round((NECTAR_BUFF_DAMAGE_MULT - 1) * 100)}% урона на {NECTAR_BUFF_DURATION_SECONDS // 60} мин."
 
     now = int(time.time())
     if user["buff_expires_ts"] and user["buff_expires_ts"] > now:

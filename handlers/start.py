@@ -66,6 +66,16 @@ async def tutorial_page(call: CallbackQuery, state: FSMContext):
     )
 
 
+async def prompt_crab_choice(message: Message, state: FSMContext):
+    """Показывает выбор краба — используется и при первом старте, и повторно
+    после каждой линьки."""
+    await state.set_state(Nav.choose_crab)
+    text = "🦀 <b>Выбери краба:</b>\n\n" + "\n".join(
+        f"{c['name']} — {c['desc']}" for c in CRABS.values()
+    )
+    await message.answer(text, reply_markup=crab_choice_kb())
+
+
 @router.message(F.text == "▶️ Начать игру")
 async def begin_game(message: Message, state: FSMContext):
     cur = await state.get_state()
@@ -77,28 +87,23 @@ async def begin_game(message: Message, state: FSMContext):
         await message.answer("Продолжаем путь!", reply_markup=main_menu_kb())
         return
 
-    await state.set_state(Nav.choose_crab)
-    text = "🦀 <b>Выбери своего краба:</b>\n\n"
-    for cid, c in CRABS.items():
-        text += (
-            f"{c['name']}\n{c['desc']}\n"
-            f"Урон {c['damage']} | Уклонение {c['evasion']}% | Удача {c['luck']}% | "
-            f"Крит.шанс {c['crit_chance']}% | Крит.урон {c['crit_damage']}% | Прочность {c['max_hp']}\n\n"
-        )
-    await message.answer(text, reply_markup=crab_choice_kb())
+    await prompt_crab_choice(message, state)
 
 
 @router.message(Nav.choose_crab, F.text.in_(NAME_TO_CRAB.keys()))
 async def choose_crab(message: Message, state: FSMContext):
     crab_id = NAME_TO_CRAB[message.text]
+    user = database.get_user(message.from_user.id)
+    is_remolt = bool(user and user["molts"] > 0)
     database.update_user(
         message.from_user.id,
         crab_type=crab_id,
         cur_hp=CRABS[crab_id]["max_hp"],
     )
     await state.set_state(Nav.main)
-    await message.answer(
-        "🌊 Путешествие начинается! Твой путь по дну будет становиться всё глубже "
-        "и опаснее — используй кнопки внизу экрана, чтобы играть.",
-        reply_markup=main_menu_kb(),
+    text = (
+        "🦀 Новый панцирь, новая жизнь! Можешь продолжать путь."
+        if is_remolt else
+        "🌊 Путешествие начинается! Кнопки внизу экрана — вся игра."
     )
+    await message.answer(text, reply_markup=main_menu_kb())

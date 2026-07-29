@@ -72,7 +72,9 @@ async def molt_confirm(call: CallbackQuery, state: FSMContext):
         f"Всего линек: {user['molts'] + 1}. Следующая линька потребует {next_required} уровня."
     )
     await call.answer()
-    await call.message.answer("Что дальше?", reply_markup=mutations_root_kb())
+
+    from handlers.start import prompt_crab_choice
+    await prompt_crab_choice(call.message, state)
 
 
 @router.callback_query(F.data == "molt_cancel")

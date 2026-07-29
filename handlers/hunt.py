@@ -21,7 +21,7 @@ from states import Nav
 
 router = Router()
 
-ATTACK_BUTTON = InlineKeyboardButton(text="⚔️ Атака", callback_data="hunt_attack")
+ATTACK_BUTTON = InlineKeyboardButton(text="✂️ Клешнёй!", callback_data="hunt_attack")
 
 DEFAULT_ABILITIES_STATE = {
     "shield_cooldown": 0,
@@ -90,7 +90,8 @@ def _abilities_status_line(abilities, crab_type):
 
 
 def _abilities_buttons(abilities, crab_type):
-    shield_label = "🛡️ Щит" if abilities["shield_cooldown"] <= 0 else f"🛡️ Щит ({abilities['shield_cooldown']})"
+    shield_name = SHIELD_ABILITY["name"]
+    shield_label = shield_name if abilities["shield_cooldown"] <= 0 else f"{shield_name} ({abilities['shield_cooldown']})"
     mark_label = "🎯 Метка" if not abilities["mark_used"] else "🎯 Метка (использована)"
     unique = UNIQUE_ABILITIES.get(crab_type, UNIQUE_ABILITIES[1])
     unique_label = unique["name"] if not abilities["unique_used"] else f"{unique['name']} (использована)"
@@ -340,7 +341,7 @@ def _resolve_monster_counter(target, stats, specials, log, evasion_penalty=0, bl
     if not dodged and block_percent:
         blocked = round(mdmg * block_percent / 100)
         mdmg -= blocked
-        log.append(f"🛡️ Щит блокировал {blocked} урона!")
+        log.append(f"{SHIELD_ABILITY['name']} блокировал {blocked} урона!")
     if dodged:
         log.append("🌊 Уклонился!" if not camouflage_triggered else "🌊 Маскировка спасла!")
     else:
@@ -552,7 +553,7 @@ async def ability_shield(call: CallbackQuery):
         return
     await call.answer()
 
-    log = ["🛡️ Ты поднимаешь щит!"]
+    log = [f"{SHIELD_ABILITY['name']} поднят!"]
     cur_hp = user["cur_hp"]
 
     if target.get("poison_turns", 0) > 0:
@@ -664,7 +665,7 @@ async def ability_unique(call: CallbackQuery):
                        stats, log, cur_hp)
 
 
-@router.message(Nav.hunt, F.text == "🏃 Отступить")
+@router.message(Nav.hunt, F.text == "↩️ Бочком назад")
 async def retreat(message: Message, state: FSMContext):
     user = database.get_user(message.from_user.id)
     if user["in_hunt"]:
@@ -676,12 +677,11 @@ async def retreat(message: Message, state: FSMContext):
             try:
                 await message.bot.edit_message_text(
                     chat_id=message.chat.id, message_id=user["battle_message_id"],
-                    text="🏃 Ты отступил, сохранив позицию и текущую прочность. Награды не будет.",
+                    text="↩️ Ты ушёл боком, сохранив позицию и прочность. Награды не будет.",
                 )
             except Exception:
                 pass
     await message.answer(
-        "Отступление сохраняет позицию и прочность как есть — прочность сама восстановится "
-        "со временем, если не охотиться. Награда за отменённый бой не начисляется.",
+        "Позиция и прочность сохранены как есть, награды не будет. Прочность восстановится сама со временем.",
         reply_markup=hunt_kb(False),
     )
