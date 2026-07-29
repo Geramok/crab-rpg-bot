@@ -28,6 +28,23 @@ logging.basicConfig(level=logging.INFO)
 PROXY_URL = os.getenv("PROXY_URL")
 
 
+async def _safe_delete_webhook(bot):
+    """delete_webhook на старте — это ОДИН сетевой запрос к Telegram, и раньше
+    если именно он попадал под сетевую блокировку (см. PROXY_URL выше), падал
+    ВЕСЬ процесс бота, а не отдельное действие — приходилось ждать внешнего
+    перезапуска. Теперь при сбое просто пробуем ещё раз с паузой, вместо того
+    чтобы ронять весь бот из-за одного неудачного запроса."""
+    for attempt in range(1, 6):
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+            return
+        except Exception as e:
+            logging.warning(f"delete_webhook не удался (попытка {attempt}/5): {e!r}")
+            if attempt < 5:
+                await asyncio.sleep(5)
+    logging.warning("delete_webhook так и не удался за 5 попыток — запускаем polling всё равно.")
+
+
 async def main():
     init_db()
 
@@ -53,7 +70,7 @@ async def main():
     dp.include_router(craft.router)
     dp.include_router(misc.router)
 
-    await bot.delete_webhook(drop_pending_updates=True)
+    await _safe_delete_webhook(bot)
 
     # Фоновый планировщик мифических ивентов — сам стартует/завершает боссов,
     # админу ничего нажимать не нужно (но /startboss и /endboss всё ещё доступны)
