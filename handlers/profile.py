@@ -8,7 +8,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 import database
-from data import CRABS, SPECIAL_MUTATIONS, STAT_LABELS
+from data import CRABS, SPECIAL_MUTATIONS, STAT_LABELS, SHIELD_ABILITY, MARK_ABILITY, UNIQUE_ABILITIES
 from game_logic import get_effective_stats, get_mutation_variant, level_up_cost, get_depth_zone_name
 from keyboards import profile_kb, kb, BACK, other_profile_kb
 from states import Nav
