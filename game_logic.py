@@ -82,9 +82,13 @@ def eligible_monsters(meters):
 
 def roll_monster(meters, elite_mult=1.0):
     """Собирает конкретного противника на метре meters: случайный вид из
-    доступных на этой глубине + числа, посчитанные по базовой формуле,
-    помноженные на индивидуальные множители вида (и elite_mult для стражей)."""
-    species = random.choice(eligible_monsters(meters))
+    доступных на этой глубине (с учётом веса — редкие 'иконки' зон весят
+    меньше и потому встречаются реже обычных существ) + числа, посчитанные
+    по базовой формуле, помноженные на индивидуальные множители вида (и
+    elite_mult для стражей)."""
+    pool = eligible_monsters(meters)
+    weights = [m.get("weight", 10) for m in pool]
+    species = random.choices(pool, weights=weights, k=1)[0]
     hp_base, dmg_base, gold_base = _base_monster_numbers(meters)
     hp = max(1, round(hp_base * species["hp_mult"] * elite_mult))
     dmg = max(1, round(dmg_base * species["dmg_mult"] * elite_mult))
