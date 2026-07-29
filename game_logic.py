@@ -68,7 +68,15 @@ def _base_monster_numbers(meters):
 
 
 def eligible_monsters(meters):
-    pool = [m for m in MONSTERS if m["min_meters"] <= meters and meters <= m.get("max_meters", float('inf'))]
+    """Существа, доступные на данной глубине. Учитывает и min_meters, и
+    max_meters (если max_meters не задан — вид доступен на любой глубине
+    выше min_meters, как левиафанёнок). ВАЖНО: раньше здесь проверялся
+    только min_meters — из-за этого добавленный в data.py max_meters ни на
+    что не влиял, монстры не переставали попадаться на большой глубине."""
+    pool = [
+        m for m in MONSTERS
+        if m["min_meters"] <= meters <= m.get("max_meters", float("inf"))
+    ]
     return pool or [MONSTERS[0]]
 
 

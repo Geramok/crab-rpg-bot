@@ -102,6 +102,13 @@ def _characteristics_text_and_kb(user_id):
                 )
     mutations_txt = "\n".join(equipped_lines) if equipped_lines else "нет надетых мутаций"
 
+    unique = UNIQUE_ABILITIES.get(user["crab_type"], UNIQUE_ABILITIES[1])
+    abilities_txt = (
+        f"{SHIELD_ABILITY['name']} — {SHIELD_ABILITY['desc']}\n"
+        f"{MARK_ABILITY['name']} — {MARK_ABILITY['desc']}\n"
+        f"{unique['name']} (твоя уникальная) — {unique['desc']}"
+    )
+
     text = (
         f"📊 <b>Характеристики</b>\n\n"
         f"Уровень краба: {user['crab_level']}\n"
@@ -112,6 +119,7 @@ def _characteristics_text_and_kb(user_id):
         f"💥 Крит. урон: {stats['crit_damage']:.1f}%\n"
         f"❤️ Прочность: {stats['max_hp']}\n\n"
         f"<b>Надетые мутации-артефакты:</b>\n{mutations_txt}\n\n"
+        f"<b>⚡ Боевые способности (кнопки прямо в бою):</b>\n{abilities_txt}\n\n"
         f"💰 Золото: {user['gold']}\n"
         f"Повышение уровня стоит: {cost} 💰"
     )

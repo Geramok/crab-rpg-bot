@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 import sqlite3
 import time
 from contextlib import closing
@@ -6,6 +7,14 @@ from contextlib import closing
 from config import DB_PATH
 
 _wal_enabled = False
+
+# На Amvera путь БД лежит в постоянном хранилище (например /data/crab_game.db).
+# Директория обычно уже существует (это точка монтирования), но на всякий
+# случай (локальный запуск, другой DB_PATH и т.п.) создаём её сами, чтобы
+# sqlite3.connect не падал с "unable to open database file".
+_db_dir = os.path.dirname(DB_PATH)
+if _db_dir:
+    os.makedirs(_db_dir, exist_ok=True)
 
 
 def get_conn():

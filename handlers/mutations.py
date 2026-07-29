@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import random
+
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -103,16 +105,25 @@ def _mutations_shop_text_and_kb(user_id):
     total_levels = sum(m["level"] for m in mutations.values())
 
     text = f"🧪 <b>Мутации — артефакты со случайными статами</b>\nОчки ДНК: {user['dna_points']} 🧬\n\n"
-    buttons = []
+    costs = {}
     for slot, slot_name in MUTATION_SLOT_NAMES.items():
         m = mutations.get(slot, {"level": 0, "equipped": 0, "variant_key": None})
         cost = mutation_cost(slot, m["level"] + 1, total_levels)
+        costs[slot] = cost
         text += f"{slot_name}: {_variant_line(slot, m)}\nСледующий уровень: {cost} 🧬\n\n"
 
-        label = "🎲 Купить (выпадет случайный артефакт)" if m["level"] == 0 else "⬆️ Улучшить"
-        buttons.append([
-            InlineKeyboardButton(text=f"{label} — {slot_name} ({cost} 🧬)", callback_data=f"buy_{slot}")
-        ])
+    min_cost, max_cost = min(costs.values()), max(costs.values())
+    cost_range = f"{min_cost}" if min_cost == max_cost else f"{min_cost}-{max_cost}"
+    text += (
+        "🎲 Одна кнопка на все три части тела — какая именно улучшится "
+        "(или впервые выпадет), решает случай при покупке."
+    )
+
+    buttons = [[InlineKeyboardButton(
+        text=f"🎲 Купить/улучшить мутацию ({cost_range} 🧬)", callback_data="buy_mutation_random"
+    )]]
+    for slot, slot_name in MUTATION_SLOT_NAMES.items():
+        m = mutations.get(slot, {"level": 0, "equipped": 0, "variant_key": None})
         if m["level"] > 0:
             toggle_txt = "Снять" if m["equipped"] else "Надеть"
             buttons.append([
@@ -129,16 +140,18 @@ async def open_mutations_shop(message: Message, state: FSMContext):
     await message.answer("Выбери действие:", reply_markup=ikb)
 
 
-_MUTATION_BUY_CALLBACKS = {f"buy_{slot}" for slot in MUTATION_SLOT_NAMES}
 _MUTATION_TOGGLE_CALLBACKS = {f"toggle_{slot}" for slot in MUTATION_SLOT_NAMES}
 
 
-@router.callback_query(F.data.in_(_MUTATION_BUY_CALLBACKS))
-async def buy_mutation(call: CallbackQuery, state: FSMContext):
-    slot = call.data.split("_", 1)[1]
-    if slot not in MUTATION_SLOT_NAMES:
-        await call.answer()
-        return
+@router.callback_query(F.data == "buy_mutation_random")
+async def buy_mutation_random(call: CallbackQuery, state: FSMContext):
+    """Одна кнопка вместо трёх — при покупке случайно выбирается ОДИН из
+    трёх слотов (ноги/панцирь/клешни). Если у выбранного слота ещё нет
+    артефакта — выпадает случайный вариант (как раньше при первой покупке
+    конкретного слота). Если уже есть — прокачивает именно его."""
+    slot = random.choice(list(MUTATION_SLOT_NAMES.keys()))
+    slot_name = MUTATION_SLOT_NAMES[slot]
+
     user = database.get_user(call.from_user.id)
     mutations = database.get_mutations(call.from_user.id)
     total_levels = sum(m["level"] for m in mutations.values())
@@ -146,7 +159,10 @@ async def buy_mutation(call: CallbackQuery, state: FSMContext):
     cost = mutation_cost(slot, m["level"] + 1, total_levels)
 
     if user["dna_points"] < cost:
-        await call.answer(f"Не хватает очков ДНК! Нужно {cost}.", show_alert=True)
+        await call.answer(
+            f"Выпало: {slot_name}! Но не хватает очков ДНК — нужно {cost}, у тебя {user['dna_points']}.",
+            show_alert=True,
+        )
         return
 
     spent = database.try_spend(call.from_user.id, "dna_points", cost)
@@ -160,10 +176,10 @@ async def buy_mutation(call: CallbackQuery, state: FSMContext):
     if is_first_purchase:
         variant = roll_mutation_variant(slot)
         database.set_mutation(call.from_user.id, slot, level=1, variant_key=variant["key"], equipped=1)
-        await call.answer(f"Выпал артефакт: {variant['name']}!", show_alert=True)
+        await call.answer(f"🎲 {slot_name}! Выпал артефакт: {variant['name']}!", show_alert=True)
     else:
         database.set_mutation(call.from_user.id, slot, level=m["level"] + 1)
-        await call.answer("Артефакт улучшен!")
+        await call.answer(f"🎲 {slot_name}! Артефакт улучшен до уровня {m['level'] + 1}.", show_alert=True)
 
     text, ikb = _mutations_shop_text_and_kb(call.from_user.id)
     await call.message.edit_text(text, reply_markup=ikb)
