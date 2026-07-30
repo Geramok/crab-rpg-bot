@@ -141,6 +141,12 @@ def init_db():
             PRIMARY KEY (event_id, user_id)
         )
         """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS promo_redemptions (
+            user_id INTEGER, code TEXT, redeemed_at INTEGER,
+            PRIMARY KEY (user_id, code)
+        )
+        """)
 
 
 # ---------------- USERS ----------------
@@ -410,3 +416,38 @@ def get_all_event_participants(event_id):
 def close_event(event_id):
     with closing(get_conn()) as conn, conn:
         conn.execute("UPDATE events SET active=0 WHERE id=?", (event_id,))
+
+
+# ---------------- ПРОМОКОДЫ ----------------
+
+def try_redeem_promo(user_id, code, gold=0, dna_points=0, nautilus_shells=0, permanent_boost=False):
+    """Атомарно ОДНИМ запросом: регистрирует использование промокода этим
+    игроком (защита от повторной активации — таблица promo_redemptions хранит
+    пару user_id+code как PRIMARY KEY, повторная попытка вставки провалится)
+    И сразу начисляет награду — либо оба шага пройдут вместе, либо ни один,
+    так что дважды получить награду за один код невозможно даже при гонке.
+    permanent_boost выставляется в 1 (не суммируется — это разовый флаг
+    'вкл', как и при обычной покупке за звёзды)."""
+    with closing(get_conn()) as conn, conn:
+        try:
+            conn.execute(
+                "INSERT INTO promo_redemptions (user_id, code, redeemed_at) VALUES (?, ?, ?)",
+                (user_id, code, int(time.time())),
+            )
+        except sqlite3.IntegrityError:
+            return False  # этот игрок уже активировал именно этот код раньше
+        if permanent_boost:
+            conn.execute(
+                "UPDATE users SET gold = gold + ?, dna_points = dna_points + ?, "
+                "nautilus_shells = nautilus_shells + ?, total_earned_gold = total_earned_gold + ?, "
+                "permanent_boost = 1 WHERE user_id = ?",
+                (gold, dna_points, nautilus_shells, gold, user_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE users SET gold = gold + ?, dna_points = dna_points + ?, "
+                "nautilus_shells = nautilus_shells + ?, total_earned_gold = total_earned_gold + ? "
+                "WHERE user_id = ?",
+                (gold, dna_points, nautilus_shells, gold, user_id),
+            )
+        return True

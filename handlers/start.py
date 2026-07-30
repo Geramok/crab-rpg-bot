@@ -2,12 +2,12 @@
 import re
 
 from aiogram import Router, F
-from aiogram.filters import CommandStart, StateFilter
+from aiogram.filters import CommandStart, CommandObject, StateFilter
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 import database
-from data import CRABS, INTRO_TEXT, HELP_PAGES
+from data import CRABS, INTRO_TEXT, HELP_PAGES, PROMO_CODES
 from keyboards import intro_kb, crab_choice_kb, main_menu_kb, help_pagination_kb
 from states import Nav
 
@@ -25,8 +25,43 @@ def _safe_default_nickname(user_id, username, first_name):
     return f"Краб{user_id % 100000}"
 
 
+async def _try_apply_promo_from_payload(user_id, payload):
+    """payload — это всё, что после '/start ' (диплинк-параметр). Промокоды
+    оформляются как 'promo_КОД' — если формат не совпал, просто ничего не
+    делаем (это обычный /start без промокода). Возвращает строку для показа
+    игроку или None, если промокода не было вовсе."""
+    if not payload or not payload.startswith("promo_"):
+        return None
+    code = payload[len("promo_"):].upper()
+    promo = PROMO_CODES.get(code)
+    if not promo:
+        return "🎟️ Такого промокода не существует (возможно, устарел)."
+
+    gold = promo.get("gold", 0)
+    dna = promo.get("dna_points", 0)
+    shells = promo.get("nautilus_shells", 0)
+    boost = bool(promo.get("permanent_boost", False))
+    applied = await database.run_async(
+        database.try_redeem_promo, user_id, code, gold, dna, shells, boost
+    )
+    if not applied:
+        return "🎟️ Этот промокод ты уже активировал раньше — второй раз награда не начисляется."
+
+    reward_parts = []
+    if gold:
+        reward_parts.append(f"+{gold} 💰")
+    if dna:
+        reward_parts.append(f"+{dna} 🧬")
+    if shells:
+        reward_parts.append(f"+{shells} 🐚")
+    if boost:
+        reward_parts.append("🌟 Вечный прилив (+15% к золоту/ДНК навсегда)")
+    reward_txt = f" ({', '.join(reward_parts)})" if reward_parts else ""
+    return f"{promo.get('text', '🎁 Промокод активирован!')}{reward_txt}"
+
+
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
+async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
     user = await database.run_async(database.get_user, message.from_user.id)
     if not user:
         nickname = _safe_default_nickname(
@@ -35,13 +70,21 @@ async def cmd_start(message: Message, state: FSMContext):
         await database.run_async(database.create_user, message.from_user.id, nickname)
         user = await database.run_async(database.get_user, message.from_user.id)
 
+    promo_text = await _try_apply_promo_from_payload(message.from_user.id, command.args)
+
     if user["crab_type"]:
         await state.set_state(Nav.main)
-        await message.answer("С возвращением на дно океана, краб! 🦀", reply_markup=main_menu_kb())
+        text = "С возвращением на дно океана, краб! 🦀"
+        if promo_text:
+            text = f"{promo_text}\n\n{text}"
+        await message.answer(text, reply_markup=main_menu_kb())
         return
 
     await state.clear()
-    await message.answer(INTRO_TEXT, reply_markup=intro_kb())
+    text = INTRO_TEXT
+    if promo_text:
+        text = f"{promo_text}\n\n{text}"
+    await message.answer(text, reply_markup=intro_kb())
 
 
 @router.message(F.text == "📖 Обучение")
