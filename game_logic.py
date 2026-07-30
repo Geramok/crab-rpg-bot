@@ -264,7 +264,7 @@ def defeat_knockback_meters(cur_meters):
     """При поражении краба отбрасывает назад (а не скидывает на берег целиком).
     12% текущей позиции, но не меньше 5 метров — на малых дистанциях (десятки
     метров) откат не должен съедать больше половины пути."""
-    knockback = max(5, round(cur_meters * 0.12))
+    knockback = max(5, round(cur_meters * 0.05))
     return max(0, cur_meters - knockback)
 
 
