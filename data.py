@@ -495,4 +495,8 @@ PROMO_CODES = {
         "gold": 1000, "nautilus_shells": 8, "permanent_boost": True,
         "text": "🌟 Особый подарок от стримера!",
     },
+    "CrabWar!": {
+        "gold": 2025, "nautilus_shells": 15,
+        "text": "🦀 Особый подарок в честь ухода компании Appxplore!",
+    },
 }
