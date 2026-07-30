@@ -492,7 +492,7 @@ PROMO_CODES = {
     # пример кода с ракушками и Вечным приливом "в подарок" — просто сотри
     # эту запись, если она не нужна, или используй как образец для своей:
     "STREAMER2026": {
-        "gold": 1000, "nautilus_shells": 10, "permanent_boost": True,
+        "gold": 1000, "nautilus_shells": 8, "permanent_boost": True,
         "text": "🌟 Особый подарок от стримера!",
     },
 }
