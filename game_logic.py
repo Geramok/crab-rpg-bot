@@ -8,7 +8,7 @@ from data import (
     CRABS, MUTATION_SLOT_BASE_COST, MUTATION_VARIANTS,
     STONE_COLORS, STONE_EFFECT_BONUS, STONE_LEVEL_CHANCE,
     MYTHIC_EVENT_UNLOCK_MOLTS, MYTHIC_EVENT_UNLOCK_MAX_METERS, MYTHIC_EVENT_UNLOCK_KILLS,
-    MONSTERS, DEPTH_ZONES, MOLT_RANKS, PLAYER_MISS_CHANCE,
+    MONSTERS, DEPTH_ZONES, DEPTH_BARRIERS, MOLT_RANKS, PLAYER_MISS_CHANCE,
     GUARD_CAMP_INTERVAL, GUARD_CAMP_ELITE_MULT,
     DIG_STONES_PER_HOUR, RESOURCE_DROP_CHANCE_KILL, RESOURCE_DROP_CHANCE_DIG, RESOURCES,
     PERMANENT_BOOST_MULT,
@@ -55,9 +55,45 @@ def get_mutation_variant(slot, variant_key):
 
 # ---------------- Монстры ----------------
 
-def next_monster_meters(current_meters):
+def total_mutation_levels(mutations):
+    """Суммарный уровень ВСЕХ купленных мутаций (ноги+панцирь+клешни вместе) —
+    именно это число сравнивается с порогом стены прокачки."""
+    if not mutations:
+        return 0
+    return sum(m.get("level", 0) for m in mutations.values())
+
+
+def get_blocking_barrier(current_meters, mutations):
+    """Возвращает (метры_барьера, нужно_уровней) первой стены прокачки, на
+    которую игрок уже наткнулся (текущая позиция дошла до барьера или дальше),
+    но суммарный уровень мутаций для её прохода ещё не набран. None — если
+    сейчас ничего не блокирует (либо барьеров впереди нет, либо все уже
+    пройдены по уровню мутаций)."""
+    total = total_mutation_levels(mutations)
+    for barrier_meters, required in DEPTH_BARRIERS:
+        if current_meters >= barrier_meters and total < required:
+            return barrier_meters, required
+    return None
+
+
+def next_monster_meters(current_meters, mutations=None):
+    """Обычный случайный шаг вперёд — НО если по пути встретится ещё не
+    пройденная стена прокачки (см. DEPTH_BARRIERS), продвижение упирается
+    ровно в неё и дальше не идёт, пока не наберётся нужный суммарный уровень
+    мутаций. mutations=None (по умолчанию) отключает проверку барьеров —
+    так старый код без учёта мутаций не ломается."""
     step = random.randint(1, 15)
-    return current_meters + step
+    new_meters = current_meters + step
+    if mutations is None:
+        return new_meters
+
+    total = total_mutation_levels(mutations)
+    for barrier_meters, required in DEPTH_BARRIERS:
+        if current_meters < barrier_meters <= new_meters and total < required:
+            return barrier_meters
+        if current_meters >= barrier_meters and total < required:
+            return current_meters  # уже стоим на непройденном барьере — топчемся на месте
+    return new_meters
 
 
 def _base_monster_numbers(meters):
@@ -264,7 +300,7 @@ def defeat_knockback_meters(cur_meters):
     """При поражении краба отбрасывает назад (а не скидывает на берег целиком).
     12% текущей позиции, но не меньше 5 метров — на малых дистанциях (десятки
     метров) откат не должен съедать больше половины пути."""
-    knockback = max(5, round(cur_meters * 0.05))
+    knockback = max(5, round(cur_meters * 0.12))
     return max(0, cur_meters - knockback)
 
 

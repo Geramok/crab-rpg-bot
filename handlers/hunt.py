@@ -14,7 +14,7 @@ from data import SPECIAL_MUTATIONS, SHIELD_ABILITY, MARK_ABILITY, UNIQUE_ABILITI
 from game_logic import (
     get_effective_stats, next_monster_meters, roll_monster, is_guard_camp_meter,
     roll_guard_camp, player_attack, monster_attack, gold_reward, apply_idle_regen,
-    defeat_knockback_meters, roll_kill_resource,
+    defeat_knockback_meters, roll_kill_resource, get_blocking_barrier, total_mutation_levels,
 )
 from keyboards import hunt_kb
 from states import Nav
@@ -180,7 +180,18 @@ async def perform_search(message: Message):
     healed_hp = apply_idle_regen(user, stats, now)
     crab_type = user["crab_type"]
 
-    new_meters = next_monster_meters(user["cur_meters"])
+    new_meters = next_monster_meters(user["cur_meters"], mutations)
+    barrier = get_blocking_barrier(new_meters, mutations)
+    barrier_line = None
+    if barrier:
+        barrier_meters, required = barrier
+        have = total_mutation_levels(mutations)
+        barrier_line = (
+            f"🚧 <b>Стена прокачки на {barrier_meters}м!</b> Нужно суммарно {required} "
+            f"уровней мутаций (сейчас {have}) — дальше не пройти, пока не прокачаешься "
+            f"в разделе «⚔️ Мощь» → «🧪 Мутации»."
+        )
+
     if is_guard_camp_meter(user["cur_meters"], new_meters):
         guards = roll_guard_camp(new_meters)
         camp = {
@@ -194,6 +205,9 @@ async def perform_search(message: Message):
         monster["meters"] = new_meters
         monster_json = json.dumps(monster)
         text, ikb = _render_single(healed_hp, stats["max_hp"], monster, crab_type)
+
+    if barrier_line:
+        text = f"{barrier_line}\n\n{text}"
 
     started = await database.run_async(database.try_start_new_hunt, message.from_user.id, monster_json, healed_hp, now)
 
