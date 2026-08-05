@@ -82,7 +82,7 @@ def next_monster_meters(current_meters, mutations=None):
     ровно в неё и дальше не идёт, пока не наберётся нужный суммарный уровень
     мутаций. mutations=None (по умолчанию) отключает проверку барьеров —
     так старый код без учёта мутаций не ломается."""
-    step = random.randint(1, 15)
+    step = random.randint(1)
     new_meters = current_meters + step
     if mutations is None:
         return new_meters
