@@ -9,7 +9,7 @@ from data import (
     STONE_COLORS, STONE_EFFECT_BONUS, STONE_LEVEL_CHANCE,
     MYTHIC_EVENT_UNLOCK_MOLTS, MYTHIC_EVENT_UNLOCK_MAX_METERS, MYTHIC_EVENT_UNLOCK_KILLS,
     MONSTERS, DEPTH_ZONES, DEPTH_BARRIERS, MOLT_RANKS, PLAYER_MISS_CHANCE,
-    GUARD_CAMP_INTERVAL, GUARD_CAMP_ELITE_MULT,
+    GUARD_CAMP_INTERVAL, GUARD_CAMP_ELITE_MULT, ELITE_ENCOUNTER_INTERVAL, ELITE_ENCOUNTER_MULT,
     DIG_STONES_PER_HOUR, RESOURCE_DROP_CHANCE_KILL, RESOURCE_DROP_CHANCE_DIG, RESOURCES,
     PERMANENT_BOOST_MULT,
 )
@@ -121,14 +121,15 @@ def roll_monster(meters, elite_mult=1.0):
     доступных на этой глубине (с учётом веса — редкие 'иконки' зон весят
     меньше и потому встречаются реже обычных существ) + числа, посчитанные
     по базовой формуле, помноженные на индивидуальные множители вида (и
-    elite_mult для стражей)."""
+    elite_mult для усиленных встреч — золото тоже растёт вместе с силой,
+    сложнее бой — больше награда)."""
     pool = eligible_monsters(meters)
     weights = [m.get("weight", 10) for m in pool]
     species = random.choices(pool, weights=weights, k=1)[0]
     hp_base, dmg_base, gold_base = _base_monster_numbers(meters)
     hp = max(1, round(hp_base * species["hp_mult"] * elite_mult))
     dmg = max(1, round(dmg_base * species["dmg_mult"] * elite_mult))
-    gold = max(1, round(gold_base * species["gold_mult"]))
+    gold = max(1, round(gold_base * species["gold_mult"] * elite_mult))
     return {
         "key": species["key"], "name": species["name"], "art": species["art"],
         "evasion": species["evasion"],
@@ -138,13 +139,21 @@ def roll_monster(meters, elite_mult=1.0):
 
 
 def is_guard_camp_meter(previous_meters, new_meters):
-    """Засада из 3 стражей происходит, когда путь пересекает границу,
-    кратную GUARD_CAMP_INTERVAL метров."""
+    """Больше не вызывается из hunt.py (лагеря стражей заменены на элитные
+    одиночные встречи, см. is_elite_encounter_meter) — оставлено на случай,
+    если понадобится вернуть."""
     return (new_meters // GUARD_CAMP_INTERVAL) > (previous_meters // GUARD_CAMP_INTERVAL)
 
 
 def roll_guard_camp(meters):
     return [roll_monster(meters, elite_mult=GUARD_CAMP_ELITE_MULT) for _ in range(3)]
+
+
+def is_elite_encounter_meter(previous_meters, new_meters):
+    """Одиночный чуть усиленный монстр вместо обычного — когда путь
+    пересекает границу, кратную ELITE_ENCOUNTER_INTERVAL метров (заменяет
+    прежние лагеря стражей каждые 100м)."""
+    return (new_meters // ELITE_ENCOUNTER_INTERVAL) > (previous_meters // ELITE_ENCOUNTER_INTERVAL)
 
 
 def get_depth_zone_name(meters):
@@ -298,9 +307,12 @@ def apply_idle_regen(user, stats, now):
 
 def defeat_knockback_meters(cur_meters):
     """При поражении краба отбрасывает назад (а не скидывает на берег целиком).
-    12% текущей позиции, но не меньше 5 метров — на малых дистанциях (десятки
-    метров) откат не должен съедать больше половины пути."""
-    knockback = max(5, round(cur_meters * 0.12))
+    Степенная формула (а не процент от позиции!) — на малых дистанциях
+    держится похоже на старые ~12%, но на больших дистанциях растёт куда
+    медленнее: на 1000м это ~53м (5.3%) вместо прежних 120м (12%), на 5000м —
+    ~152м (3%) вместо 600м. Минимум 5 метров, чтобы откат не был совсем
+    незаметным на самом старте."""
+    knockback = max(5, round(0.6 * (cur_meters ** 0.65)))
     return max(0, cur_meters - knockback)
 
 

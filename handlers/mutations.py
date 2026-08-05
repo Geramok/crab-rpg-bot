@@ -66,6 +66,7 @@ async def molt_confirm(call: CallbackQuery, state: FSMContext):
         dna_points=user["dna_points"] + gain,
         molts=user["molts"] + 1,
         total_dna_earned=user["total_dna_earned"] + gain,
+        cur_meters=max(0, user["cur_meters"] - 1),
     )
     next_required = molt_required_level(user["molts"] + 1)
     await call.message.edit_text(

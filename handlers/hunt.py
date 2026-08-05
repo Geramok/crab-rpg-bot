@@ -12,9 +12,10 @@ from aiogram.fsm.context import FSMContext
 import database
 from data import SPECIAL_MUTATIONS, SHIELD_ABILITY, MARK_ABILITY, UNIQUE_ABILITIES
 from game_logic import (
-    get_effective_stats, next_monster_meters, roll_monster, is_guard_camp_meter,
-    roll_guard_camp, player_attack, monster_attack, gold_reward, apply_idle_regen,
+    get_effective_stats, next_monster_meters, roll_monster, is_elite_encounter_meter,
+    player_attack, monster_attack, gold_reward, apply_idle_regen,
     defeat_knockback_meters, roll_kill_resource, get_blocking_barrier, total_mutation_levels,
+    ELITE_ENCOUNTER_MULT,
 )
 from keyboards import hunt_kb
 from states import Nav
@@ -106,9 +107,10 @@ def _abilities_buttons(abilities, crab_type):
 
 def _render_single(user_cur_hp, stats_max_hp, monster, crab_type, last_line=None):
     abilities = _get_abilities(monster)
+    name_line = f"💪 <b>{monster['name']} (усилен)</b>" if monster.get("elite") else f"<b>{monster['name']}</b>"
     text = (
         f"<pre>{html.escape(monster['art'])}</pre>\n"
-        f"<b>{monster['name']}</b>\n"
+        f"{name_line}\n"
         f"❤️ Враг:  [{_hp_bar(monster['hp'], monster['max_hp'])}] {max(monster['hp'],0)}/{monster['max_hp']}\n"
         f"🦀 Ты:    [{_hp_bar(user_cur_hp, stats_max_hp)}] {max(user_cur_hp,0)}/{stats_max_hp}\n"
     )
@@ -192,19 +194,12 @@ async def perform_search(message: Message):
             f"в разделе «⚔️ Мощь» → «🧪 Мутации»."
         )
 
-    if is_guard_camp_meter(user["cur_meters"], new_meters):
-        guards = roll_guard_camp(new_meters)
-        camp = {
-            "is_camp": True, "meters": new_meters, "guards": guards,
-            "defeated": [False, False, False], "current": 0,
-        }
-        monster_json = json.dumps(camp)
-        text, ikb = _render_camp(healed_hp, stats["max_hp"], camp, crab_type)
-    else:
-        monster = roll_monster(new_meters)
-        monster["meters"] = new_meters
-        monster_json = json.dumps(monster)
-        text, ikb = _render_single(healed_hp, stats["max_hp"], monster, crab_type)
+    is_elite = is_elite_encounter_meter(user["cur_meters"], new_meters)
+    monster = roll_monster(new_meters, elite_mult=ELITE_ENCOUNTER_MULT if is_elite else 1.0)
+    monster["meters"] = new_meters
+    monster["elite"] = is_elite
+    monster_json = json.dumps(monster)
+    text, ikb = _render_single(healed_hp, stats["max_hp"], monster, crab_type)
 
     if barrier_line:
         text = f"{barrier_line}\n\n{text}"
