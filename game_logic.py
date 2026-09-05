@@ -306,14 +306,9 @@ def apply_idle_regen(user, stats, now):
 
 
 def defeat_knockback_meters(cur_meters):
-    """При поражении краба отбрасывает назад (а не скидывает на берег целиком).
-    Степенная формула (а не процент от позиции!) — на малых дистанциях
-    держится похоже на старые ~12%, но на больших дистанциях растёт куда
-    медленнее: на 1000м это ~53м (5.3%) вместо прежних 120м (12%), на 5000м —
-    ~152м (3%) вместо 600м. Минимум 5 метров, чтобы откат не был совсем
-    незаметным на самом старте."""
-    knockback = max(5, round(0.6 * (cur_meters ** 0.65)))
-    return max(0, cur_meters - knockback)
+    """При поражении краба отбрасывает назад на 1 метр"""
+    knockback = 1
+    return max(1, cur_meters - knockback)
 
 
 def weighted_sample_without_replacement(items, weights, k):
