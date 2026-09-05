@@ -72,8 +72,7 @@ async def molt_confirm(call: CallbackQuery, state: FSMContext):
     )
     next_required = molt_required_level(user["molts"] + 1)
     await call.message.edit_text(
-        f"🧬 Линька прошла успешно! Получено {gain} очков ДНК.
-"
+        f"🧬 Линька прошла успешно! Получено {gain} очков ДНК.\n"
         f"Всего линек: {user['molts'] + 1}. Следующая линька потребует {next_required} уровня."
     )
     await call.answer()
