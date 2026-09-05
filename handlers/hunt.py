@@ -241,8 +241,9 @@ async def perform_search(message: Message):
         raise
 
 
-@router.message(Nav.hunt, F.text == "🔎 Рыскать по дну")
+@router.message(StateFilter(Nav.hunt, Nav.main, None), F.text.contains("Рыскать по дну"))
 async def search_enemy(message: Message, state: FSMContext):
+    await state.set_state(Nav.hunt)
     await perform_search(message)
 
 
