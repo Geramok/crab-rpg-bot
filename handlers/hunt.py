@@ -112,7 +112,6 @@ def _render_single(user_cur_hp, stats_max_hp, monster, crab_type, last_line=None
     text = (
         f"<pre>{html.escape(monster['art'])}</pre>\n"
         f"{name_line}\n"
-        f"📍 <b>Глубина: {new_meters} м</b>\n"
         f"❤️ Враг:  [{_hp_bar(monster['hp'], monster['max_hp'])}] {max(monster['hp'],0)}/{monster['max_hp']}\n"
         f"🦀 Ты:    [{_hp_bar(user_cur_hp, stats_max_hp)}] {max(user_cur_hp,0)}/{stats_max_hp}\n"
     )
