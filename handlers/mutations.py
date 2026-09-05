@@ -58,6 +58,8 @@ async def molt_confirm(call: CallbackQuery, state: FSMContext):
         return
 
     gain = apply_permanent_boost(dna_points_for_molt(user["molts"], user["crab_level"]), user)
+    
+    # ИСПРАВЛЕНИЕ: cur_meters=1 вместо cur_meters=max(0, user["cur_meters"] - 1)
     await database.run_async(
         database.update_user,
         call.from_user.id,
@@ -66,11 +68,12 @@ async def molt_confirm(call: CallbackQuery, state: FSMContext):
         dna_points=user["dna_points"] + gain,
         molts=user["molts"] + 1,
         total_dna_earned=user["total_dna_earned"] + gain,
-        cur_meters=max(0, user["cur_meters"] - 1),
+        cur_meters=1,  # Сбрасывает дистанцию на 1-й метр
     )
     next_required = molt_required_level(user["molts"] + 1)
     await call.message.edit_text(
-        f"🧬 Линька прошла успешно! Получено {gain} очков ДНК.\n"
+        f"🧬 Линька прошла успешно! Получено {gain} очков ДНК.
+"
         f"Всего линек: {user['molts'] + 1}. Следующая линька потребует {next_required} уровня."
     )
     await call.answer()
