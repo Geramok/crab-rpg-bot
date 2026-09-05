@@ -364,16 +364,35 @@ async def _finish_turn(call, user_id, user, original_monster_json, data, is_camp
                         stats, log, cur_hp):
     """Общий хвост обработки хода: проверка смерти цели (награда/лагерь) или
     смерти игрока (откат), либо просто сохранение состояния и обновление
-    экрана. Переиспользуется атакой и всеми способностями.
-
-    Бонус золота от Метки применяется здесь же, в момент ФАКТИЧЕСКОЙ выплаты —
-    для одиночного моба это сразу при убийстве, а для лагеря стражей только
-    при полной зачистке всех троих (награда там выдаётся одним пакетом), но
-    флаг 'бонус заработан' взводится сразу на добивании помеченного стража и
-    доживает до этого момента, даже если до общей выплаты ещё пара стражей."""
+    экрана."""
     message = call.message
     abilities = data.get("abilities", {})
+    
+    # Сразу собираем лог боя, чтобы использовать его в любом исходе
+    last_line = "\n".join(log)
 
+    # ИСПРАВЛЕНИЕ: Сначала проверяем смерть игрока от отдачи навыков!
+    if cur_hp <= 0:
+        knock_to = defeat_knockback_meters(user["cur_meters"])
+        recovered_hp = stats["max_hp"]
+        applied = await database.run_async(
+            database.try_apply_attack_result,
+            user_id, original_monster_json,
+            in_hunt=0, monster_json=None, cur_hp=recovered_hp,
+            cur_meters=knock_to, last_hp_regen_ts=int(time.time()),
+        )
+        if not applied:
+            return
+        final_text = (
+            f"💔 <b>Панцирь треснул!</b> Тебя отбросило с позиции {user['cur_meters']} м. "
+            f"назад до {knock_to} м.\nПрочность восстановлена полностью — можешь пробовать снова прямо сейчас.\n\n"
+            + last_line
+        )
+        await _push_battle_update(message, user_id, user["battle_message_id"], final_text)
+        await message.answer("Можешь продолжать рыскать по дну.", reply_markup=hunt_kb(False))
+        return
+
+    # Если игрок выжил, проверяем смерть врага
     if target["hp"] <= 0:
         bonus_guard_index = None
         if abilities.get("mark_active"):
@@ -393,7 +412,7 @@ async def _finish_turn(call, user_id, user, original_monster_json, data, is_camp
                 data["current"] = remaining[0]
                 text, ikb = _render_camp(
                     cur_hp, stats["max_hp"], data, user["crab_type"],
-                    last_line="\n".join(log) + "\n\n🎯 Выбери следующую цель.",
+                    last_line=last_line + "\n\n🎯 Выбери следующую цель.",
                 )
                 applied = await database.run_async(
                     database.try_apply_attack_result,
@@ -404,8 +423,8 @@ async def _finish_turn(call, user_id, user, original_monster_json, data, is_camp
                     return
                 await _push_battle_update(message, user_id, user["battle_message_id"], text, ikb)
                 return
-            # Бонус метки — точечно только на того стража, которого добили помеченным
-            # (не на всю сумму!), даже если это случилось на 1-2 хода раньше финальной выплаты.
+            
+            # Награда за полную зачистку лагеря
             total_gold = sum(
                 round(gold_reward(g, stats, user) * (gold_extra_mult if i == bonus_guard_index else 1.0))
                 for i, g in enumerate(data["guards"])
@@ -424,6 +443,48 @@ async def _finish_turn(call, user_id, user, original_monster_json, data, is_camp
                 return
             if resource:
                 await database.run_async(database.add_resource, user_id, resource)
+            bonus_txt = " (учтён бонус 🎯 Метки на одного из стражей)" if bonus_guard_index is not None else ""
+            final_text = "🏆 <b>Засада зачищена!</b>\n" + last_line + f"\n\n💰 Получено золота за всех троих: {total_gold}{bonus_txt}"
+            await _push_battle_update(message, user_id, user["battle_message_id"], final_text)
+            await message.answer("Готов к новому рысканью по дну.", reply_markup=hunt_kb(False))
+            return
+
+        # Награда за одиночного врага
+        gold = round(gold_reward(data, stats, user) * gold_extra_mult)
+        new_max_meters = max(user["max_meters"], data["meters"])
+        applied = await database.run_async(
+            database.try_apply_attack_result,
+            user_id, original_monster_json,
+            in_hunt=0, monster_json=None, cur_hp=cur_hp,
+            gold=user["gold"] + gold, kills=user["kills"] + 1,
+            cur_meters=data["meters"], max_meters=new_max_meters,
+            total_earned_gold=user["total_earned_gold"] + gold,
+            last_hp_regen_ts=int(time.time()),
+        )
+        if not applied:
+            return
+        if resource:
+            await database.run_async(database.add_resource, user_id, resource)
+        bonus_txt = " (×2 от 🎯 Метки)" if gold_extra_mult != 1.0 else ""
+        final_text = "🏆 <b>Победа!</b>\n" + last_line + f"\n\n💰 Золото: {gold}{bonus_txt}"
+        await _push_battle_update(message, user_id, user["battle_message_id"], final_text)
+        await message.answer("Готов к новому рысканью по дну.", reply_markup=hunt_kb(False))
+        return
+
+    # Если никто не умер, просто продолжаем бой
+    if is_camp:
+        text, ikb = _render_camp(cur_hp, stats["max_hp"], data, user["crab_type"], last_line=last_line)
+    else:
+        text, ikb = _render_single(cur_hp, stats["max_hp"], data, user["crab_type"], last_line=last_line)
+
+    applied = await database.run_async(
+        database.try_apply_attack_result,
+        user_id, original_monster_json,
+        cur_hp=cur_hp, monster_json=json.dumps(data),
+    )
+    if not applied:
+        return
+    await _push_battle_update(message, user_id, user["battle_message_id"], text, ikb)
             bonus_txt = " (учтён бонус 🎯 Метки на одного из стражей)" if bonus_guard_index is not None else ""
             final_text = "🏆 <b>Засада зачищена!</b>\n" + "\n".join(log) + f"\n\n💰 Получено золота за всех троих: {total_gold}{bonus_txt}"
             await _push_battle_update(message, user_id, user["battle_message_id"], final_text)
