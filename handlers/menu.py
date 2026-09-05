@@ -12,12 +12,12 @@ from states import Nav, PARENT_STATE
 router = Router()
 
 
-@router.message(Nav.main, F.text == "🔎 Рыскать по дну")
+@router.message(StateFilter(Nav.main, None), F.text.contains("Рыскать по дну"))
 async def open_hunt(message: Message, state: FSMContext):
     from handlers.hunt import perform_search
     await state.set_state(Nav.hunt)
     await perform_search(message)
-
+    
 
 @router.message(Nav.main, F.text == "🧬 Мутации")
 async def open_mutations_root(message: Message, state: FSMContext):
