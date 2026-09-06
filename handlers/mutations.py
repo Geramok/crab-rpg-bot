@@ -110,13 +110,10 @@ async def _shop_menu(user_id):
 async def open_mutations_shop(message: Message, state: FSMContext):
     await state.set_state(Nav.mutations_shop)
     text, ikb = await _shop_menu(message.from_user.id)
-    await message.answer(text, reply_markup=kb([BACK]))
     
-    # Удаляем предыдущее сообщение, если это была карточка с картинкой, чтобы не засорять чат
-    try:
-        await message.answer(text, reply_markup=ikb)
-    except:
-        pass
+    # Сначала короткое сообщение для клавиатуры, затем само меню
+    await message.answer("🧬 Открываю лабораторию...", reply_markup=kb([BACK]))
+    await message.answer(text, reply_markup=ikb)
 
 @router.callback_query(F.data == "buy_new_mut")
 async def buy_new_mut(call: CallbackQuery):
@@ -225,7 +222,7 @@ async def mut_det_reg(call: CallbackQuery, state: FSMContext):
     text += f"💰 Твой баланс: {format_number(user['dna_points'])} 🧬"
     
     equip_btn_text = "⬇️ Снять мутацию" if m["equipped"] else "⬆️ Надеть мутацию"
-    equip_action = f"unequip_reg_{variant_key}" if m["equipped"] else f"equip_reg_{variant_key}_{m['slot']}"
+    equip_action = f"unequip_reg_{variant_key}" if m["equipped"] else f"equip_reg_{variant_key}"
     
     buttons = [
         [
@@ -249,8 +246,10 @@ async def mut_det_reg(call: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("equip_reg_"))
 async def action_equip_reg(call: CallbackQuery):
-    _, _, variant_key, slot = call.data.split("_", 3)
-    await database.run_async(database.equip_mutation, call.from_user.id, variant_key, slot)
+    variant_key = call.data.replace("equip_reg_", "")
+    m = await database.run_async(database.get_mutation_by_key, call.from_user.id, variant_key)
+    
+    await database.run_async(database.equip_mutation, call.from_user.id, variant_key, m["slot"])
     await call.answer("Мутация экипирована!", show_alert=False)
     call.data = f"mut_det_reg_{variant_key}"
     await mut_det_reg(call, None)
