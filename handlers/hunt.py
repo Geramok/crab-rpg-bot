@@ -208,9 +208,9 @@ async def perform_search(message: Message):
                     message, message.from_user.id, current["battle_message_id"], cur_text, cur_ikb
                 )
             else:
-                sent = await message.answer(cur_text, reply_markup=hunt_kb(True))
+                await message.answer("⚔️ Возвращаемся в бой...", reply_markup=hunt_kb(True))
+                sent = await message.answer(cur_text, reply_markup=cur_ikb)
                 await database.run_async(database.update_user, message.from_user.id, battle_message_id=sent.message_id)
-                await _push_battle_update(message, message.from_user.id, sent.message_id, cur_text, cur_ikb)
             return
 
         await database.run_async(database.update_user, message.from_user.id, in_hunt=0, monster_json=None)
@@ -222,9 +222,9 @@ async def perform_search(message: Message):
         return
 
     try:
-        sent = await message.answer(text, reply_markup=hunt_kb(True))
+        await message.answer("👀 Ищем цель...", reply_markup=hunt_kb(True))
+        sent = await message.answer(text, reply_markup=ikb)
         await database.run_async(database.update_user, message.from_user.id, battle_message_id=sent.message_id)
-        await _push_battle_update(message, message.from_user.id, sent.message_id, text, ikb)
     except Exception:
         await database.run_async(database.update_user, message.from_user.id, in_hunt=0, monster_json=None)
         raise
