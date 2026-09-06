@@ -350,3 +350,40 @@ def mythic_events_unlocked(user):
         or user["max_meters"] >= MYTHIC_EVENT_UNLOCK_MAX_METERS
         or user["kills"] >= MYTHIC_EVENT_UNLOCK_KILLS
     )
+
+def format_number(num: int) -> str:
+    """
+    Превращает большие числа в красивый текст для вывода на экран.
+    Поддерживает: тысячи (к), миллионы (м), миллиарды (б), триллионы (т), квадриллионы (кв).
+    """
+    # Защита: отрицательные числа возвращаем как есть
+    if num < 0:
+        return str(num)
+        
+    # Квадриллионы (15 нулей)
+    if num >= 1_000_000_000_000_000:
+        formatted = f"{num / 1_000_000_000_000_000:.1f}кв"
+        return formatted.replace(".0кв", "кв")
+        
+    # Триллионы (12 нулей)
+    elif num >= 1_000_000_000_000:
+        formatted = f"{num / 1_000_000_000_000:.1f}т"
+        return formatted.replace(".0т", "т")
+        
+    # Миллиарды (9 нулей) - используем "б" (биллион), чтобы не путать с "м" (миллион)
+    elif num >= 1_000_000_000:
+        formatted = f"{num / 1_000_000_000:.1f}б"
+        return formatted.replace(".0б", "б")
+        
+    # Миллионы (6 нулей)
+    elif num >= 1_000_000:
+        formatted = f"{num / 1_000_000:.1f}м"
+        return formatted.replace(".0м", "м")
+        
+    # Тысячи (3 нуля)
+    elif num >= 1_000:
+        formatted = f"{num / 1_000:.1f}к"
+        return formatted.replace(".0к", "к")
+        
+    # Числа меньше 1000 возвращаем обычным текстом
+    return str(num)
