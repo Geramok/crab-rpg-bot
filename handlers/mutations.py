@@ -158,16 +158,6 @@ async def buy_mutation_random(call: CallbackQuery, state: FSMContext):
     slot = random.choice(list(MUTATION_SLOT_NAMES.keys()))
     slot_name = MUTATION_SLOT_NAMES[slot]
 
-3. Файл handlers/mutations.py
-
-Здесь мы отформатируем стоимость мутаций и количество получаемой ДНК.
-
-Инструкция:
-
-    Открой файл handlers/mutations.py.  
-
-    Добавь format_number
-
     user = await database.run_async(database.get_user, call.from_user.id)
     mutations = await database.run_async(database.get_mutations, call.from_user.id)
     total_levels = sum(m["level"] for m in mutations.values())
