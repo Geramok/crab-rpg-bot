@@ -15,11 +15,7 @@ from states import Nav
 router = Router()
 
 NICK_COOLDOWN_SECONDS = 7 * 24 * 60 * 60
-# Ник показывается другим игрокам (топ, поиск, профили) в сообщениях с parse_mode=HTML.
-# Разрешаем только буквы/цифры/пробел/_/- — это закрывает HTML-инъекцию через ник
-# (иначе кто-то мог бы вписать <b>/<a href=...> и сломать чужие сообщения).
 NICKNAME_PATTERN = re.compile(r"^[a-zA-Zа-яА-ЯёЁ0-9 _\-]{3,16}$")
-
 
 async def show_profile(message: Message):
     user = await database.run_async(database.get_user, message.from_user.id)
@@ -30,13 +26,12 @@ async def show_profile(message: Message):
         f"🦀 <b>{user['nickname']}</b> — {rank}\n"
         f"{CRABS[user['crab_type']]['name']} · ур. {user['crab_level']} · {user['molts']} линек\n\n"
         f"📍 {zone} (рекорд {user['max_meters']} м)\n"
-        f"💰 {user['gold']}  🧬 {user['dna_points']}  🐚 {user['nautilus_shells']}\n"
-        f"Убито: {user['kills']} (боссов: {user['boss_kills']})"
+        f"💰 {format_number(user['gold'])}  🧬 {format_number(user['dna_points'])}  🐚 {format_number(user['nautilus_shells'])}\n"
+        f"Убито: {format_number(user['kills'])} (боссов: {user['boss_kills']})"
     )
     if user["permanent_boost"]:
         text += "\n🌟 Вечный прилив: +15% к золоту и ДНК навсегда"
     await message.answer(text, reply_markup=profile_kb())
-
 
 async def _show_other_profile_text(target_user):
     zone = get_depth_zone_name(target_user["max_meters"])
@@ -45,10 +40,9 @@ async def _show_other_profile_text(target_user):
         f"🦀 <b>{target_user['nickname']}</b> — {rank}\n"
         f"{CRABS[target_user['crab_type']]['name']} · ур. {target_user['crab_level']} · {target_user['molts']} линек\n\n"
         f"📍 {zone} (рекорд {target_user['max_meters']} м)\n"
-        f"Убито: {target_user['kills']} (боссов: {target_user['boss_kills']})"
+        f"Убито: {format_number(target_user['kills'])} (боссов: {target_user['boss_kills']})"
     )
     return text
-
 
 async def _characteristics_text_and_kb(user_id):
     user = await database.run_async(database.get_user, user_id)
@@ -73,30 +67,28 @@ async def _characteristics_text_and_kb(user_id):
     text = (
         f"⚔️ <b>Мощь</b> — ур. {user['crab_level']}\n\n"
         f"⚔️{stats['damage']:.1f} 🌊{stats['evasion']:.0f}% 🍀{stats['luck']:.0f}% "
-        f"🎯{stats['crit_chance']:.0f}% 💥{stats['crit_damage']:.0f}% ❤️{stats['max_hp']:.0f}\n\n"
+        f"🎯{stats['crit_chance']:.0f}% 💥{stats['crit_damage']:.0f}% ❤️{format_number(int(stats['max_hp']))}\n\n"
         f"Мутации: {mutations_txt}\n"
         f"Способности: {abilities_txt}\n"
         f"Твоя уникальная: {unique['name']} — {unique['desc']}\n\n"
-        f"💰 {user['gold']} · след. уровень: {cost} 💰"
+        f"💰 {format_number(user['gold'])} · след. уровень: {format_number(cost)} 💰"
     )
     ikb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=f"⬆️ Повысить уровень ({cost} 💰)", callback_data="level_up")
+        InlineKeyboardButton(text=f"⬆️ Повысить уровень ({format_number(cost)} 💰)", callback_data="level_up")
     ]])
     return text, ikb
-
 
 async def show_characteristics(message: Message):
     text, ikb = await _characteristics_text_and_kb(message.from_user.id)
     await message.answer(text, reply_markup=kb([BACK]))
     await message.answer("Повысить уровень?", reply_markup=ikb)
 
-
 @router.callback_query(F.data == "level_up")
 async def level_up(call: CallbackQuery, state: FSMContext):
     user = await database.run_async(database.get_user, call.from_user.id)
     cost = level_up_cost(user["crab_level"], user["molts"])
     if user["gold"] < cost:
-        await call.answer(f"Не хватает золота! Нужно {cost} 💰.", show_alert=True)
+        await call.answer(f"Не хватает золота! Нужно {format_number(cost)} 💰.", show_alert=True)
         return
 
     spent = await database.run_async(database.try_spend, call.from_user.id, "gold", cost)
@@ -106,13 +98,8 @@ async def level_up(call: CallbackQuery, state: FSMContext):
     await database.run_async(database.update_user, call.from_user.id, crab_level=user["crab_level"] + 1)
     await call.answer("Уровень повышен!")
 
-    # редактируем ТО ЖЕ сообщение с полной актуальной сводкой характеристик —
-    # видно "изменено" вместо нового сообщения в чате
     text, ikb = await _characteristics_text_and_kb(call.from_user.id)
     await call.message.edit_text(f"✅ Уровень повышен!\n\n{text}", reply_markup=ikb)
-
-
-# ---------------- Смена ника ----------------
 
 @router.message(Nav.profile, F.text == "✏️ Сменить ник")
 async def change_nick_request(message: Message, state: FSMContext):
@@ -125,7 +112,6 @@ async def change_nick_request(message: Message, state: FSMContext):
         return
     await state.set_state(Nav.waiting_nickname)
     await message.answer("Введи новый ник (3-16 символов):", reply_markup=kb([BACK]))
-
 
 @router.message(Nav.waiting_nickname)
 async def change_nick_apply(message: Message, state: FSMContext):
@@ -147,22 +133,15 @@ async def change_nick_apply(message: Message, state: FSMContext):
     await message.answer(f"Готово! Новый ник: {nick}")
     await show_profile(message)
 
-
-# ---------------- Магазин (реальные платежи через Telegram Stars) ----------------
-
 @router.message(Nav.profile, F.text == "🛍️ Магазин")
 async def open_shop_entry(message: Message, state: FSMContext):
     from handlers.shop import open_shop
     await open_shop(message, state)
 
-
-# ---------------- Поиск игрока по нику ----------------
-
 @router.message(Nav.profile, F.text == "🔍 Найти игрока")
 async def search_player_request(message: Message, state: FSMContext):
     await state.set_state(Nav.waiting_search)
     await message.answer("Введи ник игрока, которого хочешь найти:", reply_markup=kb([BACK]))
-
 
 @router.message(Nav.waiting_search)
 async def search_player_apply(message: Message, state: FSMContext):
@@ -178,9 +157,6 @@ async def search_player_apply(message: Message, state: FSMContext):
     await state.set_state(Nav.profile)
     await message.answer(text, reply_markup=other_profile_kb())
 
-
-# ---------------- Случайные игроки для просмотра профиля ----------------
-
 @router.message(Nav.profile, F.text == "🎲 Другие игроки")
 async def suggest_players(message: Message, state: FSMContext):
     players = await database.run_async(database.get_random_players, message.from_user.id, limit=4)
@@ -195,7 +171,6 @@ async def suggest_players(message: Message, state: FSMContext):
         "🎲 Вот несколько игроков — можешь глянуть их профиль:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
-
 
 @router.callback_query(F.data.startswith("view_profile_"))
 async def view_profile_callback(call: CallbackQuery, state: FSMContext):
