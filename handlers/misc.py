@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import time
 
 from aiogram import Router, F
@@ -8,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 import database
 from data import (
     HELP_PAGES, MYTHIC_EVENT_UNLOCK_MOLTS, MYTHIC_EVENT_UNLOCK_MAX_METERS, MYTHIC_EVENT_UNLOCK_KILLS,
+    MYTHIC_EVENTS
 )
 from game_logic import mythic_events_unlocked, get_depth_zone_name, format_number
 from keyboards import kb, BACK, help_pagination_kb
@@ -120,12 +122,17 @@ async def show_events(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("boss_attack_"))
-async def boss_attack(call: CallbackQuery):
-    from game_logic import get_effective_stats, player_attack
-
+async def boss_attack(call: CallbackQuery, state: FSMContext):
     user = await database.run_async(database.get_user, call.from_user.id)
     if not mythic_events_unlocked(user):
         await call.answer("Ивенты пока недоступны — смотри условия в разделе Ивенты.", show_alert=True)
+        return
+
+    # Проверка кулдауна (3.5 часа = 12600 секунд)
+    now = int(time.time())
+    if user.get("boss_cooldown_ts") and user["boss_cooldown_ts"] > now:
+        left_minutes = (user["boss_cooldown_ts"] - now) // 60
+        await call.answer(f"Твой панцирь сломан! Восстановление: {left_minutes // 60} ч {left_minutes % 60} мин.", show_alert=True)
         return
 
     event_id = int(call.data.split("_")[-1])
@@ -134,15 +141,41 @@ async def boss_attack(call: CallbackQuery):
         await call.answer("Ивент уже завершён.", show_alert=True)
         return
 
+    # Находим данные босса для арта и текста
+    boss_template = next((e for e in MYTHIC_EVENTS if e["name"] == event["name"]), MYTHIC_EVENTS[0])
+
+    # Формируем JSON босса-манекена
+    boss_data = {
+        "is_boss": True,
+        "event_id": event["id"],
+        "name": event["name"],
+        "art": boss_template.get("art", "🐉"),
+        "hp_flavor": boss_template.get("hp_flavor", "Бессмертное существо..."),
+        "accumulated_damage": 0
+    }
+    
+    # Полностью лечим краба перед битвой
+    from game_logic import get_effective_stats
     stones = await database.run_async(database.get_stones, call.from_user.id)
     mutations = await database.run_async(database.get_mutations, call.from_user.id)
     stats = get_effective_stats(user, stones, mutations)
-    dmg, is_crit, missed = player_attack(stats)
+    full_hp = stats["max_hp"]
 
-    if missed:
-        await call.answer("💨 Промах!")
+    started = await database.run_async(database.try_start_new_hunt, call.from_user.id, json.dumps(boss_data), full_hp, now)
+    
+    if not started:
+        await call.answer("Ты уже находишься в бою!", show_alert=True)
         return
 
-    await database.run_async(database.add_event_damage, event_id, call.from_user.id, dmg)
-    crit_txt = " 💥 Крит!" if is_crit else ""
-    await call.answer(f"Ты нанёс боссу {format_number(dmg)} урона!{crit_txt}")
+    await call.answer("Битва началась!")
+    
+    # Переводим в состояние охоты и отрисовываем экран
+    await state.set_state(Nav.hunt)
+    
+    from handlers.hunt import _render_single, _push_battle_update
+    from keyboards import hunt_kb
+    text, ikb = _render_single(full_hp, stats["max_hp"], boss_data, user["crab_type"])
+    
+    sent = await call.message.answer(text, reply_markup=hunt_kb(True))
+    await database.run_async(database.update_user, call.from_user.id, battle_message_id=sent.message_id)
+    await _push_battle_update(call.message, call.from_user.id, sent.message_id, text, ikb)
