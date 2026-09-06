@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 
 import database
 from data import SHOP_ITEMS, RESOURCES
-from game_logic import shop_gold_reward, shop_dna_reward
+from game_logic import shop_gold_reward, shop_dna_reward, format_number
 from keyboards import kb, BACK
 from states import Nav
 
@@ -26,11 +26,11 @@ async def _preview_reward(user_id, item):
     user = await database.run_async(database.get_user, user_id)
     if item["reward_type"] == "gold":
         amount = shop_gold_reward(user, item["levels_worth"])
-        return f"{amount} золота 💰"
+        return f"{format_number(amount)} золота 💰"
     if item["reward_type"] == "dna":
         mutations = await database.run_async(database.get_mutations, user_id)
         amount = shop_dna_reward(mutations, item["mutation_upgrades_worth"])
-        return f"{amount} очков ДНК 🧬"
+        return f"{format_number(amount)} очков ДНК 🧬"
     return "постоянный буст +15% к золоту и ДНК навсегда"
 
 
@@ -54,7 +54,7 @@ async def open_shop(message: Message, state: FSMContext):
     user = await database.run_async(database.get_user, message.from_user.id)
     text = (
         "🛍️ <b>Магазин за Telegram Stars</b>\n\n"
-        f"🐚 Раковин наутилуса: {user['nautilus_shells']}\n\n"
+        f"🐚 Раковин наутилуса: {format_number(user['nautilus_shells'])}\n\n"
         "Чем дальше ты продвинулся — тем щедрее награда за покупку.\n\n"
     )
     if user["permanent_boost"]:
@@ -170,7 +170,7 @@ async def successful_payment(message: Message):
             gold=user["gold"] + amount,
             total_earned_gold=user["total_earned_gold"] + amount,
         )
-        await message.answer(f"✅ Спасибо за покупку! Начислено {amount} золота 💰")
+        await message.answer(f"✅ Спасибо за покупку! Начислено {format_number(amount)} золота 💰")
     elif item["reward_type"] == "dna":
         mutations = await database.run_async(database.get_mutations, message.from_user.id)
         amount = shop_dna_reward(mutations, item["mutation_upgrades_worth"])
@@ -179,7 +179,7 @@ async def successful_payment(message: Message):
             dna_points=user["dna_points"] + amount,
             total_dna_earned=user["total_dna_earned"] + amount,
         )
-        await message.answer(f"✅ Спасибо за покупку! Начислено {amount} очков ДНК 🧬")
+        await message.answer(f"✅ Спасибо за покупку! Начислено {format_number(amount)} очков ДНК 🧬")
     elif item["reward_type"] == "permanent_boost":
         await database.run_async(database.update_user, message.from_user.id, permanent_boost=1)
         await message.answer("🌟 Вечный прилив активирован! Теперь +15% к золоту и ДНК навсегда.")
