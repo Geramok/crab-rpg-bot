@@ -387,3 +387,12 @@ def format_number(num: int) -> str:
         
     # Числа меньше 1000 возвращаем обычным текстом
     return str(num)
+
+def cost_new_mutation(owned_count):
+    """Цена покупки совершенно новой мутации. Растет с каждой новой покупкой."""
+    base_cost = 25
+    return base_cost + (owned_count * 35)  # 25, 60, 95, 130...
+
+def cost_upgrade_mutation(current_level):
+    """Цена улучшения конкретной мутации. Зависит только от ее уровня."""
+    return max(10, round(15 * (current_level ** 1.4)))
