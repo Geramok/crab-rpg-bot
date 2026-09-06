@@ -9,7 +9,7 @@ import database
 from data import MUTATION_SLOT_NAMES, STAT_LABELS
 from game_logic import (
     molt_required_level, dna_points_for_molt, mutation_cost,
-    roll_mutation_variant, get_mutation_variant, apply_permanent_boost,
+    roll_mutation_variant, get_mutation_variant, apply_permanent_boost, format_number
 )
 from keyboards import mutations_root_kb, kb, BACK
 from states import Nav
@@ -41,8 +41,8 @@ async def molt_request(message: Message, state: FSMContext):
     over = user["crab_level"] - required
     bonus_txt = f" (в т.ч. +{round(over * 0.4)} за {over} уровней сверх минимума)" if over > 0 else ""
     await message.answer(
-        f"⚠️ Линька сбросит твой уровень краба ({user['crab_level']} → 1) и всё золото ({user['gold']} 💰).\n"
-        f"Взамен ты получишь <b>{gain}</b> очков ДНК 🧬{bonus_txt} "
+        f"⚠️ Линька сбросит твой уровень краба ({user['crab_level']} → 1) и всё золото ({format_number(user['gold'])} 💰).\n"
+        f"Взамен ты получишь <b>{format_number(gain)}</b> очков ДНК 🧬{bonus_txt} "
         f"(мутации и уже накопленные очки сохранятся).\n\n"
         f"Провести линьку?",
         reply_markup=_molt_confirm_kb(),
@@ -72,7 +72,7 @@ async def molt_confirm(call: CallbackQuery, state: FSMContext):
     )
     next_required = molt_required_level(user["molts"] + 1)
     await call.message.edit_text(
-        f"🧬 Линька прошла успешно! Получено {gain} очков ДНК.\n"
+        f"🧬 Линька прошла успешно! Получено {format_number(gain)} очков ДНК.\n"
         f"Всего линек: {user['molts'] + 1}. Следующая линька потребует {next_required} уровня."
     )
     await call.answer()
@@ -110,16 +110,16 @@ async def _mutations_shop_text_and_kb(user_id):
     mutations = await database.run_async(database.get_mutations, user_id)
     total_levels = sum(m["level"] for m in mutations.values())
 
-    text = f"🧪 <b>Мутации — артефакты со случайными статами</b>\nОчки ДНК: {user['dna_points']} 🧬\n\n"
+        text = f"🧪 <b>Мутации — артефакты со случайными статами</b>\nОчки ДНК: {format_number(user['dna_points'])} 🧬\n\n"
     costs = {}
     for slot, slot_name in MUTATION_SLOT_NAMES.items():
         m = mutations.get(slot, {"level": 0, "equipped": 0, "variant_key": None})
         cost = mutation_cost(slot, m["level"] + 1, total_levels)
-        costs[slot] = cost
-        text += f"{slot_name}: {_variant_line(slot, m)}\nСледующий уровень: {cost} 🧬\n\n"
+         costs[slot] = cost
+        text += f"{slot_name}: {_variant_line(slot, m)}\nСледующий уровень: {format_number(cost)} 🧬\n\n"
 
     min_cost, max_cost = min(costs.values()), max(costs.values())
-    cost_range = f"{min_cost}" if min_cost == max_cost else f"{min_cost}-{max_cost}"
+    cost_range = f"{format_number(min_cost)}" if min_cost == max_cost else f"{format_number(min_cost)}-{format_number(max_cost)}"min_cost == max_cost else f"{min_cost}-{max_cost}"
     text += (
         "🎲 Одна кнопка на все три части тела — какая именно улучшится "
         "(или впервые выпадет), решает случай при покупке."
@@ -156,7 +156,17 @@ async def buy_mutation_random(call: CallbackQuery, state: FSMContext):
     артефакта — выпадает случайный вариант (как раньше при первой покупке
     конкретного слота). Если уже есть — прокачивает именно его."""
     slot = random.choice(list(MUTATION_SLOT_NAMES.keys()))
-    slot_name = MUTATION_SLOT_NAMES[slot]
+    slot_name = MUTATION_SLOT_NAMES[slot]    }")
+
+3. Файл handlers/mutations.py
+
+Здесь мы отформатируем стоимость мутаций и количество получаемой ДНК.
+
+Инструкция:
+
+    Открой файл handlers/mutations.py.  
+
+    Добавь format_number
 
     user = await database.run_async(database.get_user, call.from_user.id)
     mutations = await database.run_async(database.get_mutations, call.from_user.id)
@@ -166,7 +176,7 @@ async def buy_mutation_random(call: CallbackQuery, state: FSMContext):
 
     if user["dna_points"] < cost:
         await call.answer(
-            f"Выпало: {slot_name}! Но не хватает очков ДНК — нужно {cost}, у тебя {user['dna_points']}.",
+            f"Выпало: {slot_name}! Но не хватает очков ДНК — нужно {format_number(cost)}, у тебя {format_number(user['dna_points'])}.",
             show_alert=True,
         )
         return
