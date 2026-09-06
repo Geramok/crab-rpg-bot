@@ -110,16 +110,16 @@ async def _mutations_shop_text_and_kb(user_id):
     mutations = await database.run_async(database.get_mutations, user_id)
     total_levels = sum(m["level"] for m in mutations.values())
 
-        text = f"🧪 <b>Мутации — артефакты со случайными статами</b>\nОчки ДНК: {format_number(user['dna_points'])} 🧬\n\n"
+    text = f"🧪 <b>Мутации — артефакты со случайными статами</b>\nОчки ДНК: {format_number(user['dna_points'])} 🧬\n\n"
     costs = {}
     for slot, slot_name in MUTATION_SLOT_NAMES.items():
         m = mutations.get(slot, {"level": 0, "equipped": 0, "variant_key": None})
         cost = mutation_cost(slot, m["level"] + 1, total_levels)
-         costs[slot] = cost
+        costs[slot] = cost
         text += f"{slot_name}: {_variant_line(slot, m)}\nСледующий уровень: {format_number(cost)} 🧬\n\n"
 
     min_cost, max_cost = min(costs.values()), max(costs.values())
-    cost_range = f"{format_number(min_cost)}" if min_cost == max_cost else f"{format_number(min_cost)}-{format_number(max_cost)}"min_cost == max_cost else f"{min_cost}-{max_cost}"
+    cost_range = f"{format_number(min_cost)}" if min_cost == max_cost else f"{format_number(min_cost)}-{format_number(max_cost)}"
     text += (
         "🎲 Одна кнопка на все три части тела — какая именно улучшится "
         "(или впервые выпадет), решает случай при покупке."
