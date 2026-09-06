@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 
 import database
 from data import CRABS, SPECIAL_MUTATIONS, SHIELD_ABILITY, MARK_ABILITY, UNIQUE_ABILITIES
-from game_logic import get_effective_stats, get_mutation_variant, level_up_cost, get_depth_zone_name, get_molt_rank
+from game_logic import get_effective_stats, get_mutation_variant, level_up_cost, get_depth_zone_name, get_molt_rank, format_number
 from keyboards import profile_kb, kb, BACK, other_profile_kb
 from states import Nav
 
