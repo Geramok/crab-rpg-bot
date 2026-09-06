@@ -9,7 +9,7 @@ import database
 from data import (
     HELP_PAGES, MYTHIC_EVENT_UNLOCK_MOLTS, MYTHIC_EVENT_UNLOCK_MAX_METERS, MYTHIC_EVENT_UNLOCK_KILLS,
 )
-from game_logic import mythic_events_unlocked, get_depth_zone_name
+from game_logic import mythic_events_unlocked, get_depth_zone_name, format_number
 from keyboards import kb, BACK, help_pagination_kb
 from states import Nav
 
@@ -57,12 +57,12 @@ async def show_stats(message: Message, state: FSMContext):
     user = await database.run_async(database.get_user, message.from_user.id)
     text = (
         f"📈 <b>Статистика за всё время</b>\n\n"
-        f"Всего заработано золота: {user['total_earned_gold']}\n"
-        f"Всего получено очков ДНК: {user['total_dna_earned']}\n"
-        f"Убито существ: {user['kills']}\n"
-        f"Убито боссов: {user['boss_kills']}\n"
+        f"Всего заработано золота: {format_number(user['total_earned_gold'])}\n"
+        f"Всего получено очков ДНК: {format_number(user['total_dna_earned'])}\n"
+        f"Убито существ: {format_number(user['kills'])}\n"
+        f"Убито боссов: {format_number(user['boss_kills'])}\n"
         f"Линек пройдено: {user['molts']}\n"
-        f"Рекорд по пройденному пути: {user['max_meters']} м ({get_depth_zone_name(user['max_meters'])})"
+        f"Рекорд по пройденному пути: {format_number(user['max_meters'])} м ({get_depth_zone_name(user['max_meters'])})"
     )
     await message.answer(text, reply_markup=kb([BACK]))
 
@@ -104,7 +104,7 @@ async def show_events(message: Message, state: FSMContext):
         for i, row in enumerate(lb, 1):
             u = await database.run_async(database.get_user, row["user_id"])
             name = u["nickname"] if u else row["user_id"]
-            text += f"{i}. {name} — {row['damage']} урона\n"
+            text += f"{i}. {name} — {format_number(row['damage'])} урона\n"
     else:
         text += "пока никто не атаковал\n"
     text += (
@@ -145,4 +145,4 @@ async def boss_attack(call: CallbackQuery):
 
     await database.run_async(database.add_event_damage, event_id, call.from_user.id, dmg)
     crit_txt = " 💥 Крит!" if is_crit else ""
-    await call.answer(f"Ты нанёс боссу {dmg} урона!{crit_txt}")
+    await call.answer(f"Ты нанёс боссу {format_number(dmg)} урона!{crit_txt}")
