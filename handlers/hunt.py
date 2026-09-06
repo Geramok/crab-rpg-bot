@@ -72,16 +72,22 @@ def _abilities_status_line(abilities, crab_type):
         parts.append(f"😮‍💨 Устал: ещё {abilities['fatigue_turns']} х.")
     if abilities["rage_active"]:
         parts.append("🩸 Раж активен")
+    
+    # ДОКУМЕНТАЦИЯ: Заменили название статуса на "Проклятие"
     if abilities["mark_active"] and abilities["mark_miss_turns"] > 0:
-        parts.append(f"🎯 Метка: ещё {abilities['mark_miss_turns']} промах(а)")
+        parts.append(f"🪝 Проклятие: ещё {abilities['mark_miss_turns']} промах(а)")
     elif abilities["mark_active"]:
-        parts.append("🎯 Метка активна")
+        parts.append("🪝 Проклятие активно")
+        
     return " | ".join(parts)
 
 def _abilities_buttons(abilities, crab_type):
     shield_name = SHIELD_ABILITY["name"]
     shield_label = shield_name if abilities["shield_cooldown"] <= 0 else f"{shield_name} ({abilities['shield_cooldown']})"
-    mark_label = "🎯 Метка" if not abilities["mark_used"] else "🎯 Метка (использована)"
+    
+    # ДОКУМЕНТАЦИЯ: Заменили название кнопки на "Проклятие" для компактности
+    mark_label = "🪝 Проклятие" if not abilities["mark_used"] else "🪝 Проклятие (исп.)"
+    
     unique = UNIQUE_ABILITIES.get(crab_type, UNIQUE_ABILITIES[1])
     unique_label = unique["name"] if not abilities["unique_used"] else f"{unique['name']} (использована)"
     return [
@@ -222,7 +228,7 @@ async def perform_search(message: Message):
         return
 
     try:
-        await message.answer("🫧 Вглядываемся в муть...", reply_markup=hunt_kb(True))
+        await message.answer("👀 Ищем цель...", reply_markup=hunt_kb(True))
         sent = await message.answer(text, reply_markup=ikb)
         await database.run_async(database.update_user, message.from_user.id, battle_message_id=sent.message_id)
     except Exception:
@@ -267,7 +273,8 @@ def _do_combat_round(target, stats, specials, log, force_crit=False, guaranteed_
                      guaranteed_miss=False, dmg_multiplier=1.0, extra_miss_chance=0):
     def do_hit(force_crit=force_crit):
         if guaranteed_miss:
-            log.append("💨 Промах! (метка)")
+            # ДОКУМЕНТАЦИЯ: Текст штрафного промаха
+            log.append("💨 Промах! (штраф проклятия)")
             return False
         if guaranteed_hit:
             dmg = round(stats["damage"] * random.uniform(0.9, 1.1) * dmg_multiplier)
@@ -449,7 +456,9 @@ async def _finish_turn(call, user_id, user, original_monster_json, data, is_camp
                 return
             if resource:
                 await database.run_async(database.add_resource, user_id, resource)
-            bonus_txt = " (учтён бонус 🎯 Метки на одного из стражей)" if bonus_guard_index is not None else ""
+            
+            # ДОКУМЕНТАЦИЯ: Текст бонуса
+            bonus_txt = " (учтён бонус 🪝 Проклятия на одного из стражей)" if bonus_guard_index is not None else ""
             final_text = "🏆 <b>Засада зачищена!</b>\n" + last_line + f"\n\n💰 Получено золота за всех троих: {format_number(total_gold)}{bonus_txt}"
             await _push_battle_update(message, user_id, user["battle_message_id"], final_text)
             await message.answer("Готов к новому рысканью по дну.", reply_markup=hunt_kb(False))
@@ -470,7 +479,9 @@ async def _finish_turn(call, user_id, user, original_monster_json, data, is_camp
             return
         if resource:
             await database.run_async(database.add_resource, user_id, resource)
-        bonus_txt = " (×2 от 🎯 Метки)" if gold_extra_mult != 1.0 else ""
+        
+        # ДОКУМЕНТАЦИЯ: Текст бонуса
+        bonus_txt = " (×2 от 🪝 Проклятия)" if gold_extra_mult != 1.0 else ""
         final_text = "🏆 <b>Победа!</b>\n" + last_line + f"\n\n💰 Золото: {format_number(gold)}{bonus_txt}"
         await _push_battle_update(message, user_id, user["battle_message_id"], final_text)
         await message.answer("Готов к новому рысканью по дну.", reply_markup=hunt_kb(False))
@@ -522,9 +533,10 @@ async def attack(call: CallbackQuery):
     cur_hp = user["cur_hp"]
 
     consumed_sprint = abilities.get("sprint_turns", 0) > 0
-    guaranteed_hit = consumed_sprint
-    consumed_mark_miss = (not consumed_sprint) and abilities.get("mark_miss_turns", 0) > 0
+    consumed_mark_miss = abilities.get("mark_miss_turns", 0) > 0
+
     guaranteed_miss = consumed_mark_miss
+    guaranteed_hit = consumed_sprint and not guaranteed_miss
     force_crit = abilities.get("rage_active", False)
 
     heal = _do_combat_round(
@@ -608,11 +620,12 @@ async def ability_mark(call: CallbackQuery):
         return
 
     if abilities["mark_used"]:
-        await call.answer("Метка уже использована в этом бою.", show_alert=True)
+        await call.answer("Проклятие уже использовано в этом бою.", show_alert=True)
         return
     await call.answer()
 
-    log = ["🎯 Ты метишь врага! Следующие 2 удара промахнутся, но добивание даст ×2 золота."]
+    # ДОКУМЕНТАЦИЯ: Текст применения способности в лог
+    log = ["🪝 Проклятие золотого краба! Следующие 2 удара промахнутся, но добивание даст ×2 золота."]
     cur_hp = user["cur_hp"]
 
     if target.get("poison_turns", 0) > 0:
@@ -655,12 +668,16 @@ async def ability_unique(call: CallbackQuery):
     cur_hp = user["cur_hp"]
     log = [f"{ability['name']}!"]
 
+    consumed_mark_miss = abilities.get("mark_miss_turns", 0) > 0
+
     if crab_type == 1:
-        heal = _do_combat_round(target, stats, specials, log, dmg_multiplier=ability["damage_mult"])
+        heal = _do_combat_round(target, stats, specials, log, dmg_multiplier=ability["damage_mult"], guaranteed_miss=consumed_mark_miss)
         cur_hp = min(stats["max_hp"], cur_hp + heal)
         self_dmg = round(stats["max_hp"] * ability["self_damage_percent"] / 100)
         cur_hp -= self_dmg
         log.append(f"💥 Отдача: -{format_number(self_dmg)} прочности")
+        if consumed_mark_miss:
+            abilities["mark_miss_turns"] -= 1
         _tick_ability_timers(abilities)
         if target["hp"] > 0 and cur_hp > 0:
             mdmg = _resolve_monster_counter(target, stats, specials, log)
@@ -673,11 +690,13 @@ async def ability_unique(call: CallbackQuery):
 
     elif crab_type == 3:
         abilities["rage_active"] = True
-        heal = _do_combat_round(target, stats, specials, log, force_crit=True)
+        heal = _do_combat_round(target, stats, specials, log, force_crit=True, guaranteed_miss=consumed_mark_miss)
         cur_hp = min(stats["max_hp"], cur_hp + heal)
         self_dmg = round(stats["max_hp"] * ability["self_damage_percent"] / 100)
         cur_hp -= self_dmg
         log.append(f"🩸 Раж отбирает {format_number(self_dmg)} прочности")
+        if consumed_mark_miss:
+            abilities["mark_miss_turns"] -= 1
         _tick_ability_timers(abilities)
         if target["hp"] > 0 and cur_hp > 0:
             mdmg = _resolve_monster_counter(target, stats, specials, log)
