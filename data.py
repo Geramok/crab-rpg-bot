@@ -354,9 +354,9 @@ STONE_EFFECT_BONUS = {
     "crit_chance": {1: 0.15, 2: 0.35, 3: 0.7},
     "crit_damage": {1: 0.4, 2: 1.0, 3: 2.0},
 }
-STONE_LEVEL_CHANCE = {1: 0.65, 2: 0.28, 3: 0.07}
-DIG_STONES_PER_HOUR = 3
-DIG_DURATION_OPTIONS_HOURS = [1, 3, 8, 24]
+STONE_LEVEL_CHANCE = {1: 0.8, 2: 0.7, 3: 0.03}
+DIG_STONES_PER_HOUR = 0.5
+DIG_DURATION_OPTIONS_HOURS = [2, 4, 16, 24]
 
 # ---------- РЕСУРСЫ И КРАФТ ----------
 RESOURCES = {
