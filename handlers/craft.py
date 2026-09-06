@@ -5,6 +5,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 import database
+from game_logic import format_number
 from data import RESOURCES, NECTAR_RECIPE, NECTAR_BUFF_DAMAGE_MULT, NECTAR_BUFF_DURATION_SECONDS
 from keyboards import kb, BACK
 
@@ -19,7 +20,7 @@ async def _craft_text_and_kb(user_id):
     for key, need in NECTAR_RECIPE.items():
         have = resources.get(key, 0)
         mark = "✅" if have >= need else "▫️"
-        text += f"{mark} {RESOURCES[key]['name']}: {have}/{need}\n"
+        text += f"{mark} {RESOURCES[key]['name']}: {format_number(have)}/{format_number(need)}\n"
     text += f"\nЭффект: +{round((NECTAR_BUFF_DAMAGE_MULT - 1) * 100)}% урона на {NECTAR_BUFF_DURATION_SECONDS // 60} мин."
 
     now = int(time.time())
