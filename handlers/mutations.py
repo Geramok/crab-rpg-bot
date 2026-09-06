@@ -6,9 +6,9 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 import database
-from data import MUTATION_SLOT_NAMES, STAT_LABELS
+from data import MUTATION_SLOT_NAMES, STAT_LABELS, MUTATION_VARIANTS, SPECIAL_MUTATIONS
 from game_logic import (
-    molt_required_level, dna_points_for_molt, mutation_cost,
+    molt_required_level, dna_points_for_molt, cost_new_mutation, cost_upgrade_mutation,
     roll_mutation_variant, get_mutation_variant, apply_permanent_boost, format_number
 )
 from keyboards import mutations_root_kb, kb, BACK
@@ -16,13 +16,11 @@ from states import Nav
 
 router = Router()
 
-
 def _molt_confirm_kb():
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✅ Да, сбросить уровень", callback_data="molt_confirm"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="molt_cancel"),
     ]])
-
 
 @router.message(Nav.mutations_root, F.text == "🧬 Линька")
 async def molt_request(message: Message, state: FSMContext):
@@ -48,7 +46,6 @@ async def molt_request(message: Message, state: FSMContext):
         reply_markup=_molt_confirm_kb(),
     )
 
-
 @router.callback_query(F.data == "molt_confirm")
 async def molt_confirm(call: CallbackQuery, state: FSMContext):
     user = await database.run_async(database.get_user, call.from_user.id)
@@ -59,7 +56,6 @@ async def molt_confirm(call: CallbackQuery, state: FSMContext):
 
     gain = apply_permanent_boost(dna_points_for_molt(user["molts"], user["crab_level"]), user)
     
-    # ИСПРАВЛЕНИЕ: cur_meters=1 вместо cur_meters=max(0, user["cur_meters"] - 1)
     await database.run_async(
         database.update_user,
         call.from_user.id,
@@ -68,7 +64,7 @@ async def molt_confirm(call: CallbackQuery, state: FSMContext):
         dna_points=user["dna_points"] + gain,
         molts=user["molts"] + 1,
         total_dna_earned=user["total_dna_earned"] + gain,
-        cur_meters=1,  # Сбрасывает дистанцию на 1-й метр
+        cur_meters=1,
     )
     next_required = molt_required_level(user["molts"] + 1)
     await call.message.edit_text(
@@ -80,7 +76,6 @@ async def molt_confirm(call: CallbackQuery, state: FSMContext):
     from handlers.start import prompt_crab_choice
     await prompt_crab_choice(call.message, state)
 
-
 @router.callback_query(F.data == "molt_cancel")
 async def molt_cancel(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text("Линька отменена.")
@@ -88,125 +83,198 @@ async def molt_cancel(call: CallbackQuery, state: FSMContext):
     await call.message.answer("Что дальше?", reply_markup=mutations_root_kb())
 
 
-# ---------------- Магазин мутаций-артефактов ----------------
+# ---------------- НОВЫЙ МАГАЗИН И ИНВЕНТАРЬ ----------------
 
-def _variant_line(slot, m):
-    variant = get_mutation_variant(slot, m["variant_key"]) if m.get("variant_key") else None
-    if not variant:
-        return "ещё не выпадала — купи, чтобы узнать, какой артефакт достанется"
-    level = m["level"]
-    buff = variant["buff_per_level"] * level
-    debuff = variant["debuff_per_level"] * level
-    equipped_txt = "✅ надета" if m["equipped"] else "выключена"
-    return (
-        f"{variant['name']} (ур. {level}, {equipped_txt})\n"
-        f"+{buff:.1f} к {STAT_LABELS[variant['buff_stat']]}, "
-        f"-{debuff:.1f} к {STAT_LABELS[variant['debuff_stat']]}"
-    )
-
-
-async def _mutations_shop_text_and_kb(user_id):
+async def _shop_menu(user_id):
     user = await database.run_async(database.get_user, user_id)
-    mutations = await database.run_async(database.get_mutations, user_id)
-    total_levels = sum(m["level"] for m in mutations.values())
-
-    text = f"🧪 <b>Мутации — артефакты со случайными статами</b>\nОчки ДНК: {format_number(user['dna_points'])} 🧬\n\n"
-    costs = {}
-    for slot, slot_name in MUTATION_SLOT_NAMES.items():
-        m = mutations.get(slot, {"level": 0, "equipped": 0, "variant_key": None})
-        cost = mutation_cost(slot, m["level"] + 1, total_levels)
-        costs[slot] = cost
-        text += f"{slot_name}: {_variant_line(slot, m)}\nСледующий уровень: {format_number(cost)} 🧬\n\n"
-
-    min_cost, max_cost = min(costs.values()), max(costs.values())
-    cost_range = f"{format_number(min_cost)}" if min_cost == max_cost else f"{format_number(min_cost)}-{format_number(max_cost)}"
-    text += (
-        "🎲 Одна кнопка на все три части тела — какая именно улучшится "
-        "(или впервые выпадет), решает случай при покупке."
+    owned = await database.run_async(database.get_mutations_v2, user_id)
+    new_cost = cost_new_mutation(len(owned))
+    
+    text = (
+        f"🧪 <b>Лаборатория Мутаций</b>\n\n"
+        f"Очки ДНК: <b>{format_number(user['dna_points'])} 🧬</b>\n\n"
+        f"# ЗДЕСЬ НАПИШИ СВОЮ ИНФОРМАЦИЮ О МУТАЦИЯХ #\n"
+        f"<i>Мутации навсегда меняют геном твоего краба. Выбивай новые варианты "
+        f"в лаборатории и комбинируй их в инвентаре под свой стиль игры!</i>"
     )
-
-    buttons = [[InlineKeyboardButton(
-        text=f"🎲 Купить/улучшить мутацию ({cost_range} 🧬)", callback_data="buy_mutation_random"
-    )]]
-    for slot, slot_name in MUTATION_SLOT_NAMES.items():
-        m = mutations.get(slot, {"level": 0, "equipped": 0, "variant_key": None})
-        if m["level"] > 0:
-            toggle_txt = "Снять" if m["equipped"] else "Надеть"
-            buttons.append([
-                InlineKeyboardButton(text=f"{toggle_txt} {slot_name}", callback_data=f"toggle_{slot}")
-            ])
-    return text, InlineKeyboardMarkup(inline_keyboard=buttons)
-
+    
+    ikb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"🧬 Купить новую ({format_number(new_cost)})", callback_data="buy_new_mut"),
+            InlineKeyboardButton(text="🎒 Инвентарь", callback_data="open_mut_inv")
+        ]
+    ])
+    return text, ikb
 
 @router.message(Nav.mutations_root, F.text == "🧪 Мутации")
 async def open_mutations_shop(message: Message, state: FSMContext):
     await state.set_state(Nav.mutations_shop)
-    text, ikb = await _mutations_shop_text_and_kb(message.from_user.id)
+    text, ikb = await _shop_menu(message.from_user.id)
     await message.answer(text, reply_markup=kb([BACK]))
-    await message.answer("Выбери действие:", reply_markup=ikb)
+    
+    # Удаляем предыдущее сообщение, если это была карточка с картинкой, чтобы не засорять чат
+    try:
+        await message.answer(text, reply_markup=ikb)
+    except:
+        pass
 
-
-_MUTATION_TOGGLE_CALLBACKS = {f"toggle_{slot}" for slot in MUTATION_SLOT_NAMES}
-
-
-@router.callback_query(F.data == "buy_mutation_random")
-async def buy_mutation_random(call: CallbackQuery, state: FSMContext):
-    """Одна кнопка вместо трёх — при покупке случайно выбирается ОДИН из
-    трёх слотов (ноги/панцирь/клешни). Если у выбранного слота ещё нет
-    артефакта — выпадает случайный вариант (как раньше при первой покупке
-    конкретного слота). Если уже есть — прокачивает именно его."""
-    slot = random.choice(list(MUTATION_SLOT_NAMES.keys()))
-    slot_name = MUTATION_SLOT_NAMES[slot]
-
+@router.callback_query(F.data == "buy_new_mut")
+async def buy_new_mut(call: CallbackQuery):
     user = await database.run_async(database.get_user, call.from_user.id)
-    mutations = await database.run_async(database.get_mutations, call.from_user.id)
-    total_levels = sum(m["level"] for m in mutations.values())
-    m = mutations.get(slot, {"level": 0, "equipped": 0, "variant_key": None})
-    cost = mutation_cost(slot, m["level"] + 1, total_levels)
+    owned = await database.run_async(database.get_mutations_v2, call.from_user.id)
+    owned_keys = [m["variant_key"] for m in owned]
 
+    all_possible = []
+    for slot, variants in MUTATION_VARIANTS.items():
+        for v in variants:
+            if v["key"] not in owned_keys:
+                all_possible.append({"key": v["key"], "slot": slot, "name": v["name"]})
+
+    if not all_possible:
+        await call.answer("У тебя уже есть все возможные мутации из лаборатории!", show_alert=True)
+        return
+
+    cost = cost_new_mutation(len(owned))
     if user["dna_points"] < cost:
-        await call.answer(
-            f"Выпало: {slot_name}! Но не хватает очков ДНК — нужно {format_number(cost)}, у тебя {format_number(user['dna_points'])}.",
-            show_alert=True,
-        )
+        await call.answer(f"Не хватает ДНК! Нужно {format_number(cost)} 🧬", show_alert=True)
         return
 
     spent = await database.run_async(database.try_spend, call.from_user.id, "dna_points", cost)
-    if not spent:
-        await call.answer("Не успел — баланс уже изменился, попробуй ещё раз.", show_alert=True)
-        text, ikb = await _mutations_shop_text_and_kb(call.from_user.id)
+    if spent:
+        new_mut = random.choice(all_possible)
+        await database.run_async(database.add_new_mutation, call.from_user.id, new_mut["key"], new_mut["slot"])
+        await call.answer(f"🎉 ГЕНЕТИЧЕСКИЙ ПРОРЫВ!\nВыбита новая мутация:\n{new_mut['name']}!", show_alert=True)
+        
+        text, ikb = await _shop_menu(call.from_user.id)
         await call.message.edit_text(text, reply_markup=ikb)
-        return
 
-    is_first_purchase = m["level"] == 0
-    if is_first_purchase:
-        variant = roll_mutation_variant(slot)
-        await database.run_async(
-            database.set_mutation, call.from_user.id, slot,
-            level=1, variant_key=variant["key"], equipped=1,
-        )
-        await call.answer(f"🎲 {slot_name}! Выпал артефакт: {variant['name']}!", show_alert=True)
+@router.callback_query(F.data == "open_mut_inv")
+async def open_mut_inv(call: CallbackQuery, state: FSMContext):
+    await state.set_state(Nav.mutations_inventory)
+    owned = await database.run_async(database.get_mutations_v2, call.from_user.id)
+    
+    text = (
+        "🎒 <b>Инвентарь мутаций</b>\n\n"
+        "🟢 — надето сейчас\n"
+        "🔵 — лежит в инвентаре\n\n"
+        "<i>Выбери мутацию, чтобы посмотреть информацию, улучшить или экипировать:</i>"
+    )
+    
+    buttons = []
+    row = []
+    for m in owned:
+        variant = get_mutation_variant(m["slot"], m["variant_key"])
+        if variant:
+            emoji = variant["name"].split()[0]
+            status = "🟢" if m["equipped"] else "🔵"
+            row.append(InlineKeyboardButton(text=f"{status} {emoji}", callback_data=f"mut_det_reg_{m['variant_key']}"))
+            
+            if len(row) == 4:
+                buttons.append(row)
+                row = []
+                
+    if row:
+        buttons.append(row)
+        
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад в лабораторию", callback_data="back_to_mut_shop")])
+    
+    try:
+        await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    except:
+        await call.message.delete()
+        await call.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await call.answer()
+
+@router.callback_query(F.data == "back_to_mut_shop")
+async def back_to_mut_shop(call: CallbackQuery, state: FSMContext):
+    await state.set_state(Nav.mutations_shop)
+    text, ikb = await _shop_menu(call.from_user.id)
+    
+    try:
+        await call.message.edit_text(text, reply_markup=ikb)
+    except:
+        await call.message.delete()
+        await call.message.answer(text, reply_markup=ikb)
+    await call.answer()
+
+# ---------------- КАРТОЧКА МУТАЦИИ ----------------
+
+@router.callback_query(F.data.startswith("mut_det_reg_"))
+async def mut_det_reg(call: CallbackQuery, state: FSMContext):
+    await state.set_state(Nav.mutation_detail)
+    variant_key = call.data.replace("mut_det_reg_", "")
+    user = await database.run_async(database.get_user, call.from_user.id)
+    m = await database.run_async(database.get_mutation_by_key, call.from_user.id, variant_key)
+    variant = get_mutation_variant(m["slot"], variant_key)
+    
+    buff = variant["buff_per_level"] * m["level"]
+    debuff = variant["debuff_per_level"] * m["level"]
+    upg_cost = cost_upgrade_mutation(m["level"])
+    
+    text = (
+        f"<b>{variant['name']}</b> (Ур. {m['level']})\n"
+        f"Слот: {MUTATION_SLOT_NAMES[m['slot']]}\n\n"
+        f"📈 <b>Эффекты:</b>\n"
+        f"• +{buff:.1f} к {STAT_LABELS[variant['buff_stat']]}\n"
+        f"• -{debuff:.1f} к {STAT_LABELS[variant['debuff_stat']]}\n\n"
+    )
+    
+    if variant.get("desc"):
+        text += f"✨ <b>Пассивная способность:</b>\n{variant['desc']}\n\n"
+        
+    text += f"💰 Твой баланс: {format_number(user['dna_points'])} 🧬"
+    
+    equip_btn_text = "⬇️ Снять мутацию" if m["equipped"] else "⬆️ Надеть мутацию"
+    equip_action = f"unequip_reg_{variant_key}" if m["equipped"] else f"equip_reg_{variant_key}_{m['slot']}"
+    
+    buttons = [
+        [
+            InlineKeyboardButton(text=equip_btn_text, callback_data=equip_action),
+            InlineKeyboardButton(text=f"Улучшить ({format_number(upg_cost)} 🧬)", callback_data=f"upgrade_{variant_key}")
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад в инвентарь", callback_data="open_mut_inv")]
+    ]
+    ikb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    try:
+        await call.message.delete()
+    except:
+        pass
+
+    if variant.get("image_id"):
+        await call.message.answer_photo(photo=variant["image_id"], caption=text, reply_markup=ikb)
     else:
-        await database.run_async(database.set_mutation, call.from_user.id, slot, level=m["level"] + 1)
-        await call.answer(f"🎲 {slot_name}! Артефакт улучшен до уровня {m['level'] + 1}.", show_alert=True)
+        await call.message.answer(text, reply_markup=ikb)
+    await call.answer()
 
-    text, ikb = await _mutations_shop_text_and_kb(call.from_user.id)
-    await call.message.edit_text(text, reply_markup=ikb)
+@router.callback_query(F.data.startswith("equip_reg_"))
+async def action_equip_reg(call: CallbackQuery):
+    _, _, variant_key, slot = call.data.split("_", 3)
+    await database.run_async(database.equip_mutation, call.from_user.id, variant_key, slot)
+    await call.answer("Мутация экипирована!", show_alert=False)
+    call.data = f"mut_det_reg_{variant_key}"
+    await mut_det_reg(call, None)
 
+@router.callback_query(F.data.startswith("unequip_reg_"))
+async def action_unequip_reg(call: CallbackQuery):
+    variant_key = call.data.replace("unequip_reg_", "")
+    await database.run_async(database.unequip_mutation, call.from_user.id, variant_key)
+    await call.answer("Мутация снята!", show_alert=False)
+    call.data = f"mut_det_reg_{variant_key}"
+    await mut_det_reg(call, None)
 
-@router.callback_query(F.data.in_(_MUTATION_TOGGLE_CALLBACKS))
-async def toggle_mutation(call: CallbackQuery, state: FSMContext):
-    slot = call.data.split("_", 1)[1]
-    if slot not in MUTATION_SLOT_NAMES:
-        await call.answer()
-        return
-    mutations = await database.run_async(database.get_mutations, call.from_user.id)
-    m = mutations.get(slot, {"level": 0, "equipped": 0})
-    if m["level"] <= 0:
-        await call.answer("Сначала купи эту мутацию.", show_alert=True)
-        return
-    await database.run_async(database.set_mutation, call.from_user.id, slot, equipped=not m["equipped"])
-    await call.answer("Готово!")
-
-    text, ikb = await _mutations_shop_text_and_kb(call.from_user.id)
-    await call.message.edit_text(text, reply_markup=ikb)
+@router.callback_query(F.data.startswith("upgrade_"))
+async def action_upgrade(call: CallbackQuery):
+    variant_key = call.data.replace("upgrade_", "")
+    m = await database.run_async(database.get_mutation_by_key, call.from_user.id, variant_key)
+    cost = cost_upgrade_mutation(m["level"])
+    
+    spent = await database.run_async(database.try_spend, call.from_user.id, "dna_points", cost)
+    if spent:
+        await database.run_async(database.upgrade_mutation, call.from_user.id, variant_key)
+        await call.answer(f"Уровень повышен до {m['level'] + 1}!", show_alert=False)
+    else:
+        await call.answer(f"Не хватает ДНК! Нужно {format_number(cost)} 🧬", show_alert=True)
+        
+    call.data = f"mut_det_reg_{variant_key}"
+    await mut_det_reg(call, None)
