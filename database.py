@@ -91,7 +91,8 @@ def init_db():
             buff_damage_mult REAL,
             buff_expires_ts INTEGER,
             permanent_boost INTEGER DEFAULT 0,
-            battle_message_id INTEGER
+            battle_message_id INTEGER,
+            boss_cooldown_ts INTEGER DEFAULT 0
         )
         """)
         # Миграции для БД, созданных до появления этих полей
@@ -99,6 +100,7 @@ def init_db():
             ("dig_duration_seconds", "INTEGER"), ("last_hp_regen_ts", "INTEGER"),
             ("buff_damage_mult", "REAL"), ("buff_expires_ts", "INTEGER"),
             ("permanent_boost", "INTEGER DEFAULT 0"), ("battle_message_id", "INTEGER"),
+            ("boss_cooldown_ts", "INTEGER DEFAULT 0"),
         ]:
             _safe_migrate(conn, f"ALTER TABLE users ADD COLUMN {col} {coltype}")
 
