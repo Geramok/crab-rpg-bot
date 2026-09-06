@@ -156,7 +156,7 @@ async def buy_mutation_random(call: CallbackQuery, state: FSMContext):
     артефакта — выпадает случайный вариант (как раньше при первой покупке
     конкретного слота). Если уже есть — прокачивает именно его."""
     slot = random.choice(list(MUTATION_SLOT_NAMES.keys()))
-    slot_name = MUTATION_SLOT_NAMES[slot]    }")
+    slot_name = MUTATION_SLOT_NAMES[slot]
 
 3. Файл handlers/mutations.py
 
