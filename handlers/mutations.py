@@ -111,7 +111,6 @@ async def open_mutations_shop(message: Message, state: FSMContext):
     await state.set_state(Nav.mutations_shop)
     text, ikb = await _shop_menu(message.from_user.id)
     
-    # Сначала короткое сообщение для клавиатуры, затем само меню
     await message.answer("🧬 Открываю лабораторию...", reply_markup=kb([BACK]))
     await message.answer(text, reply_markup=ikb)
 
@@ -196,10 +195,7 @@ async def back_to_mut_shop(call: CallbackQuery, state: FSMContext):
 
 # ---------------- КАРТОЧКА МУТАЦИИ ----------------
 
-@router.callback_query(F.data.startswith("mut_det_reg_"))
-async def mut_det_reg(call: CallbackQuery, state: FSMContext):
-    await state.set_state(Nav.mutation_detail)
-    variant_key = call.data.replace("mut_det_reg_", "")
+async def _show_mutation_detail(call: CallbackQuery, variant_key: str):
     user = await database.run_async(database.get_user, call.from_user.id)
     m = await database.run_async(database.get_mutation_by_key, call.from_user.id, variant_key)
     variant = get_mutation_variant(m["slot"], variant_key)
@@ -242,6 +238,12 @@ async def mut_det_reg(call: CallbackQuery, state: FSMContext):
         await call.message.answer_photo(photo=variant["image_id"], caption=text, reply_markup=ikb)
     else:
         await call.message.answer(text, reply_markup=ikb)
+
+@router.callback_query(F.data.startswith("mut_det_reg_"))
+async def mut_det_reg(call: CallbackQuery, state: FSMContext):
+    await state.set_state(Nav.mutation_detail)
+    variant_key = call.data.replace("mut_det_reg_", "")
+    await _show_mutation_detail(call, variant_key)
     await call.answer()
 
 @router.callback_query(F.data.startswith("equip_reg_"))
@@ -251,16 +253,14 @@ async def action_equip_reg(call: CallbackQuery):
     
     await database.run_async(database.equip_mutation, call.from_user.id, variant_key, m["slot"])
     await call.answer("Мутация экипирована!", show_alert=False)
-    call.data = f"mut_det_reg_{variant_key}"
-    await mut_det_reg(call, None)
+    await _show_mutation_detail(call, variant_key)
 
 @router.callback_query(F.data.startswith("unequip_reg_"))
 async def action_unequip_reg(call: CallbackQuery):
     variant_key = call.data.replace("unequip_reg_", "")
     await database.run_async(database.unequip_mutation, call.from_user.id, variant_key)
     await call.answer("Мутация снята!", show_alert=False)
-    call.data = f"mut_det_reg_{variant_key}"
-    await mut_det_reg(call, None)
+    await _show_mutation_detail(call, variant_key)
 
 @router.callback_query(F.data.startswith("upgrade_"))
 async def action_upgrade(call: CallbackQuery):
@@ -275,5 +275,4 @@ async def action_upgrade(call: CallbackQuery):
     else:
         await call.answer(f"Не хватает ДНК! Нужно {format_number(cost)} 🧬", show_alert=True)
         
-    call.data = f"mut_det_reg_{variant_key}"
-    await mut_det_reg(call, None)
+    await _show_mutation_detail(call, variant_key)
