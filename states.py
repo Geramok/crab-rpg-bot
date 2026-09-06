@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from aiogram.fsm.state import StatesGroup, State
 
-
 class Nav(StatesGroup):
     choose_crab = State()
     choose_shore = State()
@@ -9,6 +8,8 @@ class Nav(StatesGroup):
     hunt = State()
     mutations_root = State()
     mutations_shop = State()
+    mutations_inventory = State() # НОВОЕ: Комната инвентаря
+    mutation_detail = State()     # НОВОЕ: Комната карточки конкретной мутации
     menu_root = State()
     profile = State()
     characteristics = State()
@@ -22,12 +23,13 @@ class Nav(StatesGroup):
     waiting_nickname = State()
     waiting_search = State()
 
-
 # Куда возвращает кнопка "Назад" из каждого состояния
 PARENT_STATE = {
     Nav.hunt: Nav.main,
     Nav.mutations_root: Nav.main,
     Nav.mutations_shop: Nav.mutations_root,
+    Nav.mutations_inventory: Nav.mutations_shop,  # НОВОЕ: Из инвентаря возвращаемся в магазин
+    Nav.mutation_detail: Nav.mutations_inventory, # НОВОЕ: Из карточки возвращаемся в сетку инвентаря
     Nav.menu_root: Nav.main,
     Nav.profile: Nav.menu_root,
     Nav.characteristics: Nav.menu_root,
