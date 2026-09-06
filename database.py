@@ -453,3 +453,58 @@ def try_redeem_promo(user_id, code, gold=0, dna_points=0, nautilus_shells=0, per
                 (gold, dna_points, nautilus_shells, gold, user_id),
             )
         return True
+
+# Замени функцию init_db (добавь туда mutations_v2)
+def init_db():
+    with closing(get_conn()) as conn, conn:
+        # ... (здесь остается старый код создания users, stones и т.д.) ...
+        
+        # НОВАЯ ТАБЛИЦА МУТАЦИЙ
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS mutations_v2 (
+            user_id INTEGER, variant_key TEXT, slot TEXT, level INTEGER DEFAULT 1,
+            equipped INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, variant_key)
+        )
+        """)
+        
+        # Автоматический перенос старых мутаций в новую систему
+        try:
+            conn.execute("""
+            INSERT OR IGNORE INTO mutations_v2 (user_id, variant_key, slot, level, equipped)
+            SELECT user_id, variant_key, slot, level, equipped FROM mutations WHERE variant_key IS NOT NULL
+            """)
+        except Exception:
+            pass
+
+# Полностью замени старые функции для мутаций на эти:
+def get_mutations_v2(user_id):
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT * FROM mutations_v2 WHERE user_id=?", (user_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+def get_mutation_by_key(user_id, variant_key):
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM mutations_v2 WHERE user_id=? AND variant_key=?", (user_id, variant_key)).fetchone()
+        return dict(row) if row else None
+
+def add_new_mutation(user_id, variant_key, slot):
+    with closing(get_conn()) as conn, conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO mutations_v2 (user_id, variant_key, slot, level, equipped) VALUES (?, ?, ?, 1, 0)",
+            (user_id, variant_key, slot)
+        )
+
+def equip_mutation(user_id, variant_key, slot):
+    """Снимает все мутации с этого слота и надевает выбранную"""
+    with closing(get_conn()) as conn, conn:
+        conn.execute("UPDATE mutations_v2 SET equipped=0 WHERE user_id=? AND slot=?", (user_id, slot))
+        conn.execute("UPDATE mutations_v2 SET equipped=1 WHERE user_id=? AND variant_key=?", (user_id, variant_key))
+
+def unequip_mutation(user_id, variant_key):
+    with closing(get_conn()) as conn, conn:
+        conn.execute("UPDATE mutations_v2 SET equipped=0 WHERE user_id=? AND variant_key=?", (user_id, variant_key))
+
+def upgrade_mutation(user_id, variant_key):
+    with closing(get_conn()) as conn, conn:
+        conn.execute("UPDATE mutations_v2 SET level = level + 1 WHERE user_id=? AND variant_key=?", (user_id, variant_key))
