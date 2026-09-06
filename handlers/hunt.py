@@ -222,7 +222,7 @@ async def perform_search(message: Message):
         return
 
     try:
-        await message.answer("👀 Ищем цель...", reply_markup=hunt_kb(True))
+        await message.answer("🫧 Вглядываемся в муть...", reply_markup=hunt_kb(True))
         sent = await message.answer(text, reply_markup=ikb)
         await database.run_async(database.update_user, message.from_user.id, battle_message_id=sent.message_id)
     except Exception:
