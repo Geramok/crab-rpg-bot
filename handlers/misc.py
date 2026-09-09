@@ -17,7 +17,6 @@ from states import Nav
 
 router = Router()
 
-
 @router.message(Nav.misc, F.text == "🏆 Топ")
 async def show_top(message: Message, state: FSMContext):
     await state.set_state(Nav.misc_detail)
@@ -31,14 +30,12 @@ async def show_top(message: Message, state: FSMContext):
             text += f"{i}. {p['nickname']} — {p['crab_level']} ур. ({p['molts']} линек, {zone})\n"
     await message.answer(text, reply_markup=kb([BACK]))
 
-
 @router.message(Nav.misc, F.text == "❓ Помощь")
 async def show_help(message: Message, state: FSMContext):
     await state.set_state(Nav.misc_detail)
     title, text = HELP_PAGES[0]
     await message.answer(f"<b>{title}</b>\n\n{text}", reply_markup=kb([BACK]))
     await message.answer("Листай страницы:", reply_markup=help_pagination_kb(0, len(HELP_PAGES)))
-
 
 @router.callback_query(F.data.startswith("help_page_"))
 async def help_page(call: CallbackQuery):
@@ -51,7 +48,6 @@ async def help_page(call: CallbackQuery):
     await call.message.edit_text(
         f"<b>{title}</b>\n\n{text}", reply_markup=help_pagination_kb(page, len(HELP_PAGES))
     )
-
 
 @router.message(Nav.misc, F.text == "📈 Статистика")
 async def show_stats(message: Message, state: FSMContext):
@@ -67,7 +63,6 @@ async def show_stats(message: Message, state: FSMContext):
         f"Рекорд по пройденному пути: {format_number(user['max_meters'])} м ({get_depth_zone_name(user['max_meters'])})"
     )
     await message.answer(text, reply_markup=kb([BACK]))
-
 
 @router.message(Nav.misc, F.text == "🐉 Ивенты")
 async def show_events(message: Message, state: FSMContext):
@@ -109,9 +104,11 @@ async def show_events(message: Message, state: FSMContext):
             text += f"{i}. {name} — {format_number(row['damage'])} урона\n"
     else:
         text += "пока никто не атаковал\n"
+        
     text += (
-        "\n💡 Награды распределяются не только по топу урона — жемчужные кейсы "
-        "разыгрываются между всеми активными участниками, шанс есть у каждого!"
+        "\n💡 Награды зависят от нанесенного урона! Топ-3 получают самые редкие сундуки "
+        "(Жемчужный, Золотой, Роскошный), а остальные участники — Стандартный сундук. "
+        "Шанс на легендарную мутацию есть в каждом сундуке!"
     )
 
     ikb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -119,7 +116,6 @@ async def show_events(message: Message, state: FSMContext):
     ]])
     await message.answer(text, reply_markup=kb([BACK]))
     await message.answer("Готов атаковать?", reply_markup=ikb)
-
 
 @router.callback_query(F.data.startswith("boss_attack_"))
 async def boss_attack(call: CallbackQuery, state: FSMContext):
@@ -157,7 +153,7 @@ async def boss_attack(call: CallbackQuery, state: FSMContext):
     # Полностью лечим краба перед битвой
     from game_logic import get_effective_stats
     stones = await database.run_async(database.get_stones, call.from_user.id)
-    mutations = await database.run_async(database.get_mutations, call.from_user.id)
+    mutations = await database.run_async(database.get_mutations_v2, call.from_user.id)
     stats = get_effective_stats(user, stones, mutations)
     full_hp = stats["max_hp"]
 
