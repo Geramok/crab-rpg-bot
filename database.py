@@ -9,42 +9,20 @@ from config import DB_PATH
 
 _wal_enabled = False
 
-
 async def run_async(func, *args, **kwargs):
-    """Выполняет синхронный вызов к SQLite в отдельном потоке (через
-    asyncio.to_thread), не блокируя event loop бота. Диск (особенно
-    смонтированное сетевое хранилище вроде /data на Amvera) может отвечать
-    заметно медленнее локального — раньше КАЖДЫЙ такой вызов делался прямо
-    в хендлере и на время своего выполнения останавливал обработку ВСЕХ
-    остальных апдейтов бота (сообщения других игроков, ответы Telegram и
-    т.д.). Теперь медленный диск тормозит только конкретное действие
-    конкретного игрока, а не весь бот целиком."""
     return await asyncio.to_thread(func, *args, **kwargs)
 
-# На Amvera путь БД лежит в постоянном хранилище (например /data/crab_game.db).
-# Директория обычно уже существует (это точка монтирования), но на всякий
-# случай (локальный запуск, другой DB_PATH и т.п.) создаём её сами, чтобы
-# sqlite3.connect не падал с "unable to open database file".
 _db_dir = os.path.dirname(DB_PATH)
 if _db_dir:
     os.makedirs(_db_dir, exist_ok=True)
 
-
 def get_conn():
-    # timeout здесь — это ПОДСТРАХОВКА (сколько ждать снятия блокировки перед
-    # ошибкой), а не основная защита — основная защита ниже, WAL-режим.
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
 
     global _wal_enabled
     if not _wal_enabled:
-        # WAL позволяет читать базу, пока кто-то другой в неё пишет (и наоборот) —
-        # без этого режим по умолчанию ('delete') блокирует ВСЁ на время записи,
-        # а наш бот открывает новое соединение почти на каждый вызов (получить
-        # юзера/камни/мутации/начать бой — это несколько отдельных обращений на
-        # одно игровое действие), так что при частых запросах блокировки реальны
-        # и дают ощутимые случайные задержки — это и есть WAL-фикс.
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=10000")
         _wal_enabled = True
@@ -52,50 +30,28 @@ def get_conn():
         conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
-
 def _safe_migrate(conn, sql):
     try:
         conn.execute(sql)
     except sqlite3.OperationalError:
-        pass  # колонка/индекс уже существует
-
+        pass 
 
 def init_db():
     with closing(get_conn()) as conn, conn:
         conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            nickname TEXT,
-            crab_type INTEGER,
-            shore INTEGER,
-            crab_level INTEGER DEFAULT 1,
-            gold INTEGER DEFAULT 0,
-            dna_points INTEGER DEFAULT 0,
-            molts INTEGER DEFAULT 0,
-            max_meters INTEGER DEFAULT 0,
-            cur_meters INTEGER DEFAULT 0,
-            cur_hp INTEGER DEFAULT 0,
-            in_hunt INTEGER DEFAULT 0,
-            monster_json TEXT,
-            kills INTEGER DEFAULT 0,
-            boss_kills INTEGER DEFAULT 0,
-            dig_start_ts INTEGER,
-            dig_duration_seconds INTEGER,
-            last_hp_regen_ts INTEGER,
-            last_nick_change_ts INTEGER,
-            registered_at INTEGER,
-            total_earned_gold INTEGER DEFAULT 0,
-            total_dna_earned INTEGER DEFAULT 0,
-            nautilus_shells INTEGER DEFAULT 0,
-            buff_damage_mult REAL,
-            buff_expires_ts INTEGER,
-            permanent_boost INTEGER DEFAULT 0,
-            battle_message_id INTEGER,
-            boss_cooldown_ts INTEGER DEFAULT 0
+            user_id INTEGER PRIMARY KEY, username TEXT, nickname TEXT, crab_type INTEGER,
+            shore INTEGER, crab_level INTEGER DEFAULT 1, gold INTEGER DEFAULT 0,
+            dna_points INTEGER DEFAULT 0, molts INTEGER DEFAULT 0, max_meters INTEGER DEFAULT 0,
+            cur_meters INTEGER DEFAULT 0, cur_hp INTEGER DEFAULT 0, in_hunt INTEGER DEFAULT 0,
+            monster_json TEXT, kills INTEGER DEFAULT 0, boss_kills INTEGER DEFAULT 0,
+            dig_start_ts INTEGER, dig_duration_seconds INTEGER, last_hp_regen_ts INTEGER,
+            last_nick_change_ts INTEGER, registered_at INTEGER, total_earned_gold INTEGER DEFAULT 0,
+            total_dna_earned INTEGER DEFAULT 0, nautilus_shells INTEGER DEFAULT 0,
+            buff_damage_mult REAL, buff_expires_ts INTEGER, permanent_boost INTEGER DEFAULT 0,
+            battle_message_id INTEGER, boss_cooldown_ts INTEGER DEFAULT 0
         )
         """)
-        # Миграции для БД, созданных до появления этих полей
         for col, coltype in [
             ("dig_duration_seconds", "INTEGER"), ("last_hp_regen_ts", "INTEGER"),
             ("buff_damage_mult", "REAL"), ("buff_expires_ts", "INTEGER"),
@@ -110,6 +66,7 @@ def init_db():
             PRIMARY KEY (user_id, color, level)
         )
         """)
+        
         conn.execute("""
         CREATE TABLE IF NOT EXISTS mutations (
             user_id INTEGER, slot TEXT, level INTEGER DEFAULT 0,
@@ -120,17 +77,35 @@ def init_db():
         _safe_migrate(conn, "ALTER TABLE mutations ADD COLUMN variant_key TEXT")
 
         conn.execute("""
-        CREATE TABLE IF NOT EXISTS special_mutations (
-            user_id INTEGER, key TEXT, equipped INTEGER DEFAULT 0,
-            PRIMARY KEY (user_id, key)
+        CREATE TABLE IF NOT EXISTS mutations_v2 (
+            user_id INTEGER, variant_key TEXT, slot TEXT, level INTEGER DEFAULT 1,
+            equipped INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, variant_key)
         )
         """)
+        try:
+            conn.execute("""
+            INSERT OR IGNORE INTO mutations_v2 (user_id, variant_key, slot, level, equipped)
+            SELECT user_id, variant_key, slot, level, equipped FROM mutations WHERE variant_key IS NOT NULL
+            """)
+        except Exception:
+            pass
+
         conn.execute("""
         CREATE TABLE IF NOT EXISTS resources (
             user_id INTEGER, key TEXT, count INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, key)
         )
         """)
+        
+        # НОВАЯ ТАБЛИЦА ДЛЯ СУНДУКОВ
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS chests (
+            user_id INTEGER, chest_type TEXT, count INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, chest_type)
+        )
+        """)
+
         conn.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT,
@@ -150,18 +125,14 @@ def init_db():
         )
         """)
 
-
 # ---------------- USERS ----------------
-
 def get_user(user_id):
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
         return dict(row) if row else None
 
-
 def user_exists(user_id):
     return get_user(user_id) is not None
-
 
 def create_user(user_id, username):
     with closing(get_conn()) as conn, conn:
@@ -170,12 +141,6 @@ def create_user(user_id, username):
             "VALUES (?, ?, ?, ?, ?)",
             (user_id, username, username, int(time.time()), int(time.time())),
         )
-        for slot in ("legs", "shell", "claws"):
-            conn.execute(
-                "INSERT OR IGNORE INTO mutations (user_id, slot, level, equipped) VALUES (?, ?, 0, 0)",
-                (user_id, slot),
-            )
-
 
 def update_user(user_id, **fields):
     if not fields:
@@ -185,17 +150,13 @@ def update_user(user_id, **fields):
     with closing(get_conn()) as conn, conn:
         conn.execute(f"UPDATE users SET {keys} WHERE user_id=?", values)
 
-
 def try_spend(user_id, field, amount):
-    """Атомарно списывает amount из поля field, только если средств хватает.
-    Защита от гонки при быстром двойном клике."""
     with closing(get_conn()) as conn, conn:
         cur = conn.execute(
             f"UPDATE users SET {field} = {field} - ? WHERE user_id=? AND {field} >= ?",
             (amount, user_id, amount),
         )
         return cur.rowcount > 0
-
 
 def try_start_dig(user_id, duration_seconds):
     with closing(get_conn()) as conn, conn:
@@ -205,7 +166,6 @@ def try_start_dig(user_id, duration_seconds):
         )
         return cur.rowcount > 0
 
-
 def try_collect_dig(user_id, expected_start_ts):
     with closing(get_conn()) as conn, conn:
         cur = conn.execute(
@@ -214,16 +174,7 @@ def try_collect_dig(user_id, expected_start_ts):
         )
         return cur.rowcount > 0
 
-
 def try_start_new_hunt(user_id, monster_json, cur_hp, now):
-    """Атомарно ОДНИМ запросом: занимает слот охоты И сразу записывает
-    монстра/HP/время старта. Это заменяет старую двухшаговую версию (сначала
-    занять слот, потом отдельно записать монстра) — если между этими двумя
-    шагами что-то падало (сеть, редкий баг рендера), слот оставался занятым
-    НАВСЕГДА без монстра, и игрок застревал в бесконечном цикле 'уже
-    сражаешься' / 'чуть-чуть не успел'. Теперь либо всё атомарно записывается
-    вместе, либо не пишется вообще — промежуточного разбитого состояния
-    в принципе не существует."""
     with closing(get_conn()) as conn, conn:
         cur = conn.execute(
             "UPDATE users SET in_hunt=1, monster_json=?, cur_hp=?, last_hp_regen_ts=? "
@@ -231,7 +182,6 @@ def try_start_new_hunt(user_id, monster_json, cur_hp, now):
             (monster_json, cur_hp, now, user_id),
         )
         return cur.rowcount > 0
-
 
 def try_apply_attack_result(user_id, expected_monster_json, **updates):
     set_clause = ", ".join(f"{k}=?" for k in updates)
@@ -243,7 +193,6 @@ def try_apply_attack_result(user_id, expected_monster_json, **updates):
         )
         return cur.rowcount > 0
 
-
 def get_top_players(limit=10):
     with closing(get_conn()) as conn:
         rows = conn.execute(
@@ -252,14 +201,12 @@ def get_top_players(limit=10):
         ).fetchall()
         return [dict(r) for r in rows]
 
-
 def find_user_by_nickname(nickname):
     with closing(get_conn()) as conn:
         row = conn.execute(
             "SELECT * FROM users WHERE nickname = ? COLLATE NOCASE LIMIT 1", (nickname,)
         ).fetchone()
         return dict(row) if row else None
-
 
 def get_random_players(exclude_user_id, limit=3):
     with closing(get_conn()) as conn:
@@ -269,9 +216,7 @@ def get_random_players(exclude_user_id, limit=3):
         ).fetchall()
         return [dict(r) for r in rows]
 
-
 # ---------------- STONES ----------------
-
 def add_stone(user_id, color, level, amount=1):
     with closing(get_conn()) as conn, conn:
         conn.execute(
@@ -280,7 +225,6 @@ def add_stone(user_id, color, level, amount=1):
             (user_id, color, level, amount, amount),
         )
 
-
 def get_stones(user_id):
     with closing(get_conn()) as conn:
         rows = conn.execute(
@@ -288,9 +232,7 @@ def get_stones(user_id):
         ).fetchall()
         return [dict(r) for r in rows]
 
-
 # ---------------- RESOURCES / КРАФТ ----------------
-
 def add_resource(user_id, key, amount=1):
     with closing(get_conn()) as conn, conn:
         conn.execute(
@@ -299,7 +241,6 @@ def add_resource(user_id, key, amount=1):
             (user_id, key, amount, amount),
         )
 
-
 def get_resources(user_id):
     with closing(get_conn()) as conn:
         rows = conn.execute(
@@ -307,10 +248,7 @@ def get_resources(user_id):
         ).fetchall()
         return {r["key"]: r["count"] for r in rows}
 
-
 def try_craft(user_id, recipe):
-    """Атомарно проверяет и списывает ресурсы по рецепту (recipe: {key: amount}).
-    Возвращает True, если удалось (хватило всех ресурсов сразу)."""
     with closing(get_conn()) as conn, conn:
         current = {
             r["key"]: r["count"]
@@ -326,158 +264,7 @@ def try_craft(user_id, recipe):
             )
         return True
 
-
-# ---------------- MUTATIONS ----------------
-
-def get_mutations(user_id):
-    with closing(get_conn()) as conn:
-        rows = conn.execute("SELECT * FROM mutations WHERE user_id=?", (user_id,)).fetchall()
-        return {r["slot"]: dict(r) for r in rows}
-
-
-def set_mutation(user_id, slot, level=None, equipped=None, variant_key=None):
-    current = get_mutations(user_id).get(slot, {"level": 0, "equipped": 0, "variant_key": None})
-    new_level = level if level is not None else current["level"]
-    new_equipped = int(equipped) if equipped is not None else current["equipped"]
-    new_variant = variant_key if variant_key is not None else current.get("variant_key")
-    with closing(get_conn()) as conn, conn:
-        conn.execute(
-            "INSERT INTO mutations (user_id, slot, level, equipped, variant_key) VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT(user_id, slot) DO UPDATE SET level=?, equipped=?, variant_key=?",
-            (user_id, slot, new_level, new_equipped, new_variant, new_level, new_equipped, new_variant),
-        )
-
-
-def get_special_mutations(user_id):
-    with closing(get_conn()) as conn:
-        rows = conn.execute("SELECT * FROM special_mutations WHERE user_id=?", (user_id,)).fetchall()
-        return {r["key"]: dict(r) for r in rows}
-
-
-def add_special_mutation(user_id, key):
-    with closing(get_conn()) as conn, conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO special_mutations (user_id, key, equipped) VALUES (?, ?, 0)",
-            (user_id, key),
-        )
-
-
-def set_special_mutation_equipped(user_id, key, equipped):
-    with closing(get_conn()) as conn, conn:
-        conn.execute(
-            "UPDATE special_mutations SET equipped=? WHERE user_id=? AND key=?",
-            (int(equipped), user_id, key),
-        )
-
-
-# ---------------- EVENTS (boss) ----------------
-
-def create_event(name, description, duration_seconds):
-    now = int(time.time())
-    with closing(get_conn()) as conn, conn:
-        cur = conn.execute(
-            "INSERT INTO events (name, description, started_at, ends_at, active) VALUES (?, ?, ?, ?, 1)",
-            (name, description, now, now + duration_seconds),
-        )
-        return cur.lastrowid
-
-
-def get_active_event():
-    with closing(get_conn()) as conn:
-        row = conn.execute("SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1").fetchone()
-        return dict(row) if row else None
-
-
-def add_event_damage(event_id, user_id, damage):
-    with closing(get_conn()) as conn, conn:
-        conn.execute(
-            "INSERT INTO event_damage (event_id, user_id, damage) VALUES (?, ?, ?) "
-            "ON CONFLICT(event_id, user_id) DO UPDATE SET damage = damage + ?",
-            (event_id, user_id, damage, damage),
-        )
-
-
-def get_event_leaderboard(event_id, limit=50):
-    with closing(get_conn()) as conn:
-        rows = conn.execute(
-            "SELECT user_id, damage FROM event_damage WHERE event_id=? ORDER BY damage DESC LIMIT ?",
-            (event_id, limit),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def get_all_event_participants(event_id):
-    with closing(get_conn()) as conn:
-        rows = conn.execute(
-            "SELECT user_id, damage FROM event_damage WHERE event_id=? ORDER BY damage DESC",
-            (event_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def close_event(event_id):
-    with closing(get_conn()) as conn, conn:
-        conn.execute("UPDATE events SET active=0 WHERE id=?", (event_id,))
-
-
-# ---------------- ПРОМОКОДЫ ----------------
-
-def try_redeem_promo(user_id, code, gold=0, dna_points=0, nautilus_shells=0, permanent_boost=False):
-    """Атомарно ОДНИМ запросом: регистрирует использование промокода этим
-    игроком (защита от повторной активации — таблица promo_redemptions хранит
-    пару user_id+code как PRIMARY KEY, повторная попытка вставки провалится)
-    И сразу начисляет награду — либо оба шага пройдут вместе, либо ни один,
-    так что дважды получить награду за один код невозможно даже при гонке.
-    permanent_boost выставляется в 1 (не суммируется — это разовый флаг
-    'вкл', как и при обычной покупке за звёзды)."""
-    with closing(get_conn()) as conn, conn:
-        try:
-            conn.execute(
-                "INSERT INTO promo_redemptions (user_id, code, redeemed_at) VALUES (?, ?, ?)",
-                (user_id, code, int(time.time())),
-            )
-        except sqlite3.IntegrityError:
-            return False  # этот игрок уже активировал именно этот код раньше
-        if permanent_boost:
-            conn.execute(
-                "UPDATE users SET gold = gold + ?, dna_points = dna_points + ?, "
-                "nautilus_shells = nautilus_shells + ?, total_earned_gold = total_earned_gold + ?, "
-                "permanent_boost = 1 WHERE user_id = ?",
-                (gold, dna_points, nautilus_shells, gold, user_id),
-            )
-        else:
-            conn.execute(
-                "UPDATE users SET gold = gold + ?, dna_points = dna_points + ?, "
-                "nautilus_shells = nautilus_shells + ?, total_earned_gold = total_earned_gold + ? "
-                "WHERE user_id = ?",
-                (gold, dna_points, nautilus_shells, gold, user_id),
-            )
-        return True
-
-# Замени функцию init_db (добавь туда mutations_v2)
-def init_db():
-    with closing(get_conn()) as conn, conn:
-        # ... (здесь остается старый код создания users, stones и т.д.) ...
-        
-        # НОВАЯ ТАБЛИЦА МУТАЦИЙ
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS mutations_v2 (
-            user_id INTEGER, variant_key TEXT, slot TEXT, level INTEGER DEFAULT 1,
-            equipped INTEGER DEFAULT 0,
-            PRIMARY KEY (user_id, variant_key)
-        )
-        """)
-        
-        # Автоматический перенос старых мутаций в новую систему
-        try:
-            conn.execute("""
-            INSERT OR IGNORE INTO mutations_v2 (user_id, variant_key, slot, level, equipped)
-            SELECT user_id, variant_key, slot, level, equipped FROM mutations WHERE variant_key IS NOT NULL
-            """)
-        except Exception:
-            pass
-
-# Полностью замени старые функции для мутаций на эти:
+# ---------------- MUTATIONS V2 ----------------
 def get_mutations_v2(user_id):
     with closing(get_conn()) as conn:
         rows = conn.execute("SELECT * FROM mutations_v2 WHERE user_id=?", (user_id,)).fetchall()
@@ -496,7 +283,6 @@ def add_new_mutation(user_id, variant_key, slot):
         )
 
 def equip_mutation(user_id, variant_key, slot):
-    """Снимает все мутации с этого слота и надевает выбранную"""
     with closing(get_conn()) as conn, conn:
         conn.execute("UPDATE mutations_v2 SET equipped=0 WHERE user_id=? AND slot=?", (user_id, slot))
         conn.execute("UPDATE mutations_v2 SET equipped=1 WHERE user_id=? AND variant_key=?", (user_id, variant_key))
@@ -508,3 +294,94 @@ def unequip_mutation(user_id, variant_key):
 def upgrade_mutation(user_id, variant_key):
     with closing(get_conn()) as conn, conn:
         conn.execute("UPDATE mutations_v2 SET level = level + 1 WHERE user_id=? AND variant_key=?", (user_id, variant_key))
+
+# ---------------- СУНДУКИ (CHESTS) ----------------
+def add_chest(user_id, chest_type, amount=1):
+    with closing(get_conn()) as conn, conn:
+        conn.execute(
+            "INSERT INTO chests (user_id, chest_type, count) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id, chest_type) DO UPDATE SET count = count + ?",
+            (user_id, chest_type, amount, amount)
+        )
+
+def get_chests(user_id):
+    with closing(get_conn()) as conn:
+        rows = conn.execute("SELECT chest_type, count FROM chests WHERE user_id=? AND count > 0", (user_id,)).fetchall()
+        return {r["chest_type"]: r["count"] for r in rows}
+
+def try_spend_chest(user_id, chest_type, amount=1):
+    with closing(get_conn()) as conn, conn:
+        cur = conn.execute(
+            "UPDATE chests SET count = count - ? WHERE user_id=? AND chest_type=? AND count >= ?",
+            (amount, user_id, chest_type, amount)
+        )
+        return cur.rowcount > 0
+
+# ---------------- EVENTS (boss) ----------------
+def create_event(name, description, duration_seconds):
+    now = int(time.time())
+    with closing(get_conn()) as conn, conn:
+        cur = conn.execute(
+            "INSERT INTO events (name, description, started_at, ends_at, active) VALUES (?, ?, ?, ?, 1)",
+            (name, description, now, now + duration_seconds),
+        )
+        return cur.lastrowid
+
+def get_active_event():
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1").fetchone()
+        return dict(row) if row else None
+
+def add_event_damage(event_id, user_id, damage):
+    with closing(get_conn()) as conn, conn:
+        conn.execute(
+            "INSERT INTO event_damage (event_id, user_id, damage) VALUES (?, ?, ?) "
+            "ON CONFLICT(event_id, user_id) DO UPDATE SET damage = damage + ?",
+            (event_id, user_id, damage, damage),
+        )
+
+def get_event_leaderboard(event_id, limit=50):
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            "SELECT user_id, damage FROM event_damage WHERE event_id=? ORDER BY damage DESC LIMIT ?",
+            (event_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+def get_all_event_participants(event_id):
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            "SELECT user_id, damage FROM event_damage WHERE event_id=? ORDER BY damage DESC",
+            (event_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+def close_event(event_id):
+    with closing(get_conn()) as conn, conn:
+        conn.execute("UPDATE events SET active=0 WHERE id=?", (event_id,))
+
+# ---------------- ПРОМОКОДЫ ----------------
+def try_redeem_promo(user_id, code, gold=0, dna_points=0, nautilus_shells=0, permanent_boost=False):
+    with closing(get_conn()) as conn, conn:
+        try:
+            conn.execute(
+                "INSERT INTO promo_redemptions (user_id, code, redeemed_at) VALUES (?, ?, ?)",
+                (user_id, code, int(time.time())),
+            )
+        except sqlite3.IntegrityError:
+            return False
+        if permanent_boost:
+            conn.execute(
+                "UPDATE users SET gold = gold + ?, dna_points = dna_points + ?, "
+                "nautilus_shells = nautilus_shells + ?, total_earned_gold = total_earned_gold + ?, "
+                "permanent_boost = 1 WHERE user_id = ?",
+                (gold, dna_points, nautilus_shells, gold, user_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE users SET gold = gold + ?, dna_points = dna_points + ?, "
+                "nautilus_shells = nautilus_shells + ?, total_earned_gold = total_earned_gold + ? "
+                "WHERE user_id = ?",
+                (gold, dna_points, nautilus_shells, gold, user_id),
+            )
+        return True
