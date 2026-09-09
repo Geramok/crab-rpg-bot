@@ -28,7 +28,7 @@ async def _preview_reward(user_id, item):
         amount = shop_gold_reward(user, item["levels_worth"])
         return f"{format_number(amount)} золота 💰"
     if item["reward_type"] == "dna":
-        mutations = await database.run_async(database.get_mutations, user_id)
+        mutations = await database.run_async(database.get_mutations_v2, user_id)
         amount = shop_dna_reward(mutations, item["mutation_upgrades_worth"])
         return f"{format_number(amount)} очков ДНК 🧬"
     return "постоянный буст +15% к золоту и ДНК навсегда"
@@ -172,7 +172,7 @@ async def successful_payment(message: Message):
         )
         await message.answer(f"✅ Спасибо за покупку! Начислено {format_number(amount)} золота 💰")
     elif item["reward_type"] == "dna":
-        mutations = await database.run_async(database.get_mutations, message.from_user.id)
+        mutations = await database.run_async(database.get_mutations_v2, message.from_user.id)
         amount = shop_dna_reward(mutations, item["mutation_upgrades_worth"])
         await database.run_async(
             database.update_user, message.from_user.id,
