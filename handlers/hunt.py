@@ -11,12 +11,12 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 import database
-from data import SPECIAL_MUTATIONS, SHIELD_ABILITY, MARK_ABILITY, UNIQUE_ABILITIES
+from data import SHIELD_ABILITY, MARK_ABILITY, UNIQUE_ABILITIES
 from game_logic import (
     get_effective_stats, next_monster_meters, roll_monster, is_elite_encounter_meter,
     player_attack, monster_attack, gold_reward, apply_idle_regen,
     defeat_knockback_meters, roll_kill_resource, get_blocking_barrier, total_mutation_levels,
-    ELITE_ENCOUNTER_MULT, format_number
+    ELITE_ENCOUNTER_MULT, format_number, get_equipped_special_effects
 )
 from keyboards import hunt_kb
 from states import Nav
@@ -54,10 +54,6 @@ def _tick_ability_timers(abilities, consumed_sprint=False, consumed_mark_miss=Fa
     if abilities["fatigue_turns"] > 0 and not consumed_sprint:
         abilities["fatigue_turns"] -= 1
 
-async def _equipped_specials(user_id):
-    special = await database.run_async(database.get_special_mutations, user_id)
-    return {k for k, v in special.items() if v["equipped"]}
-
 def _hp_bar(current, total, length=10):
     current = max(0, current)
     total = max(1, total)
@@ -73,7 +69,6 @@ def _abilities_status_line(abilities, crab_type):
     if abilities["rage_active"]:
         parts.append("🩸 Раж активен")
     
-    # ДОКУМЕНТАЦИЯ: Заменили название статуса на "Проклятие"
     if abilities["mark_active"] and abilities["mark_miss_turns"] > 0:
         parts.append(f"🪝 Проклятие: ещё {abilities['mark_miss_turns']} промах(а)")
     elif abilities["mark_active"]:
@@ -85,7 +80,6 @@ def _abilities_buttons(abilities, crab_type):
     shield_name = SHIELD_ABILITY["name"]
     shield_label = shield_name if abilities["shield_cooldown"] <= 0 else f"{shield_name} ({abilities['shield_cooldown']})"
     
-    # ДОКУМЕНТАЦИЯ: Заменили название кнопки на "Проклятие" для компактности
     mark_label = "🪝 Проклятие" if not abilities["mark_used"] else "🪝 Проклятие (исп.)"
     
     unique = UNIQUE_ABILITIES.get(crab_type, UNIQUE_ABILITIES[1])
@@ -171,7 +165,7 @@ async def _push_battle_update(message, user_id, message_id, text, reply_markup=N
 async def perform_search(message: Message):
     user = await database.run_async(database.get_user, message.from_user.id)
     stones = await database.run_async(database.get_stones, message.from_user.id)
-    mutations = await database.run_async(database.get_mutations, message.from_user.id)
+    mutations = await database.run_async(database.get_mutations_v2, message.from_user.id)
     stats = get_effective_stats(user, stones, mutations)
     now = int(time.time())
     healed_hp = apply_idle_regen(user, stats, now)
@@ -255,7 +249,7 @@ async def pick_guard(call: CallbackQuery):
     await database.run_async(database.update_user, call.from_user.id, monster_json=json.dumps(camp))
 
     stones = await database.run_async(database.get_stones, call.from_user.id)
-    mutations = await database.run_async(database.get_mutations, call.from_user.id)
+    mutations = await database.run_async(database.get_mutations_v2, call.from_user.id)
     stats = get_effective_stats(user, stones, mutations)
     text, ikb = _render_camp(user["cur_hp"], stats["max_hp"], camp, user["crab_type"])
     await call.answer()
@@ -273,7 +267,6 @@ def _do_combat_round(target, stats, specials, log, force_crit=False, guaranteed_
                      guaranteed_miss=False, dmg_multiplier=1.0, extra_miss_chance=0):
     def do_hit(force_crit=force_crit):
         if guaranteed_miss:
-            # ДОКУМЕНТАЦИЯ: Текст штрафного промаха
             log.append("💨 Промах! (штраф проклятия)")
             return False
         if guaranteed_hit:
@@ -299,15 +292,18 @@ def _do_combat_round(target, stats, specials, log, force_crit=False, guaranteed_
             
         crit_txt = " 💥" if is_crit else ""
         log.append(f"Удар: -{format_number(dmg)}{crit_txt}")
+        
         if "vampirism" in specials:
-            heal = round(dmg * SPECIAL_MUTATIONS["vampirism"]["percent"] / 100)
+            heal = round(dmg * 25 / 100)
             if heal > 0:
                 log.append(f"🩸 +{format_number(heal)} HP")
                 do_hit.heal = do_hit.__dict__.get("heal", 0) + heal
-        if "poison" in specials and random.random() * 100 < SPECIAL_MUTATIONS["poison"]["chance"]:
+                
+        if "poison" in specials and random.random() * 100 < 25:
             target["poison_turns"] = 3
-            target["poison_dmg"] = round(stats["damage"] * 0.3)
+            target["poison_dmg"] = max(1, round(stats["damage"] * 0.3))
             log.append("☠️ Отравлен!")
+            
         return is_crit
 
     do_hit.heal = 0
@@ -320,10 +316,10 @@ def _do_combat_round(target, stats, specials, log, force_crit=False, guaranteed_
         target["poison_turns"] -= 1
         log.append(f"☠️ Яд: -{format_number(target['poison_dmg'])}")
 
-    puncture_crit = "puncture" in specials and random.random() * 100 < SPECIAL_MUTATIONS["puncture"]["chance"]
+    puncture_crit = "puncture" in specials and random.random() * 100 < 15
     was_crit = do_hit(force_crit=(force_crit or puncture_crit))
 
-    if (target.get("is_boss") or target.get("hp", 0) > 0) and was_crit and "frenzy" in specials and random.random() * 100 < SPECIAL_MUTATIONS["frenzy"]["chance"]:
+    if (target.get("is_boss") or target.get("hp", 0) > 0) and was_crit and "frenzy" in specials and random.random() * 100 < 30:
         log.append("🌀 Бешенство!")
         do_hit(force_crit=force_crit)
 
@@ -344,7 +340,7 @@ def _resolve_monster_counter(target, stats, specials, log, evasion_penalty=0, bl
         mdmg, dodged = monster_attack(target, effective_stats)
         
     camouflage_triggered = False
-    if not dodged and not target.get("is_boss") and "camouflage" in specials and random.random() * 100 < SPECIAL_MUTATIONS["camouflage"]["chance"]:
+    if not dodged and not target.get("is_boss") and "camouflage" in specials and random.random() * 100 < 20:
         dodged, mdmg, camouflage_triggered = True, 0, True
         
     if not dodged and block_percent:
@@ -358,14 +354,12 @@ def _resolve_monster_counter(target, stats, specials, log, evasion_penalty=0, bl
         log.append(f"Враг бьёт: -{format_number(mdmg)}")
     return mdmg
 
-async def _finish_turn(call, user_id, user, original_monster_json, data, is_camp, target,
-                       stats, log, cur_hp):
+async def _finish_turn(call, user_id, user, original_monster_json, data, is_camp, target, stats, specials, log, cur_hp):
     message = call.message
     abilities = data.get("abilities", {})
-    
-    last_line = "\n".join(log)
 
     if cur_hp <= 0:
+        last_line = "\n".join(log)
         if target.get("is_boss"):
             await database.run_async(database.add_event_damage, target["event_id"], user_id, target["accumulated_damage"])
             cooldown_ts = int(time.time()) + int(3.5 * 3600)
@@ -423,6 +417,7 @@ async def _finish_turn(call, user_id, user, original_monster_json, data, is_camp
             data["defeated"][data["current"]] = True
             remaining = [i for i, d in enumerate(data["defeated"]) if not d]
             if remaining:
+                last_line = "\n".join(log)
                 data["current"] = remaining[0]
                 text, ikb = _render_camp(
                     cur_hp, stats["max_hp"], data, user["crab_type"],
@@ -442,6 +437,12 @@ async def _finish_turn(call, user_id, user, original_monster_json, data, is_camp
                 round(gold_reward(g, stats, user) * (gold_extra_mult if i == bonus_guard_index else 1.0))
                 for i, g in enumerate(data["guards"])
             )
+            
+            if "greed" in specials and random.random() * 100 < 20:
+                total_gold *= 2
+                log.append("🏆️ Блестящий золотом панцирь удвоил золото!")
+                
+            last_line = "\n".join(log)
             new_max_meters = max(user["max_meters"], data["meters"])
             applied = await database.run_async(
                 database.try_apply_attack_result,
@@ -457,7 +458,6 @@ async def _finish_turn(call, user_id, user, original_monster_json, data, is_camp
             if resource:
                 await database.run_async(database.add_resource, user_id, resource)
             
-            # ДОКУМЕНТАЦИЯ: Текст бонуса
             bonus_txt = " (учтён бонус 🪝 Проклятия на одного из стражей)" if bonus_guard_index is not None else ""
             final_text = "🏆 <b>Засада зачищена!</b>\n" + last_line + f"\n\n💰 Получено золота за всех троих: {format_number(total_gold)}{bonus_txt}"
             await _push_battle_update(message, user_id, user["battle_message_id"], final_text)
@@ -465,6 +465,11 @@ async def _finish_turn(call, user_id, user, original_monster_json, data, is_camp
             return
 
         gold = round(gold_reward(data, stats, user) * gold_extra_mult)
+        if "greed" in specials and random.random() * 100 < 20:
+            gold *= 2
+            log.append("🏆️ Блестящий золотом панцирь удвоил золото!")
+            
+        last_line = "\n".join(log)
         new_max_meters = max(user["max_meters"], data["meters"])
         applied = await database.run_async(
             database.try_apply_attack_result,
@@ -480,13 +485,13 @@ async def _finish_turn(call, user_id, user, original_monster_json, data, is_camp
         if resource:
             await database.run_async(database.add_resource, user_id, resource)
         
-        # ДОКУМЕНТАЦИЯ: Текст бонуса
         bonus_txt = " (×2 от 🪝 Проклятия)" if gold_extra_mult != 1.0 else ""
         final_text = "🏆 <b>Победа!</b>\n" + last_line + f"\n\n💰 Золото: {format_number(gold)}{bonus_txt}"
         await _push_battle_update(message, user_id, user["battle_message_id"], final_text)
         await message.answer("Готов к новому рысканью по дну.", reply_markup=hunt_kb(False))
         return
 
+    last_line = "\n".join(log)
     if is_camp:
         text, ikb = _render_camp(cur_hp, stats["max_hp"], data, user["crab_type"], last_line=last_line)
     else:
@@ -506,9 +511,9 @@ async def _load_battle_context(user_id):
     if not user["in_hunt"] or not user["monster_json"]:
         return None
     stones = await database.run_async(database.get_stones, user_id)
-    mutations = await database.run_async(database.get_mutations, user_id)
+    mutations = await database.run_async(database.get_mutations_v2, user_id)
     stats = get_effective_stats(user, stones, mutations)
-    specials = await _equipped_specials(user_id)
+    specials = get_equipped_special_effects(mutations)
     original_monster_json = user["monster_json"]
     data = json.loads(original_monster_json)
     is_camp = data.get("is_camp", False)
@@ -567,7 +572,7 @@ async def attack(call: CallbackQuery):
         cur_hp -= mdmg
 
     await _finish_turn(call, user_id, user, original_monster_json, data, is_camp, target,
-                       stats, log, cur_hp)
+                       stats, specials, log, cur_hp)
 
 @router.callback_query(F.data == "ability_shield")
 async def ability_shield(call: CallbackQuery):
@@ -604,7 +609,7 @@ async def ability_shield(call: CallbackQuery):
         )
         cur_hp -= mdmg
 
-    await _finish_turn(call, user_id, user, original_monster_json, data, is_camp, target, stats, log, cur_hp)
+    await _finish_turn(call, user_id, user, original_monster_json, data, is_camp, target, stats, specials, log, cur_hp)
 
 @router.callback_query(F.data == "ability_mark")
 async def ability_mark(call: CallbackQuery):
@@ -624,7 +629,6 @@ async def ability_mark(call: CallbackQuery):
         return
     await call.answer()
 
-    # ДОКУМЕНТАЦИЯ: Текст применения способности в лог
     log = ["🪝 Проклятие золотого краба! Следующие 2 удара промахнутся, но добивание даст ×2 золота."]
     cur_hp = user["cur_hp"]
 
@@ -642,7 +646,7 @@ async def ability_mark(call: CallbackQuery):
         mdmg = _resolve_monster_counter(target, stats, specials, log)
         cur_hp -= mdmg
 
-    await _finish_turn(call, user_id, user, original_monster_json, data, is_camp, target, stats, log, cur_hp)
+    await _finish_turn(call, user_id, user, original_monster_json, data, is_camp, target, stats, specials, log, cur_hp)
 
 @router.callback_query(F.data == "ability_unique")
 async def ability_unique(call: CallbackQuery):
@@ -705,7 +709,7 @@ async def ability_unique(call: CallbackQuery):
         _tick_ability_timers(abilities)
 
     await _finish_turn(call, user_id, user, original_monster_json, data, is_camp, target,
-                       stats, log, cur_hp)
+                       stats, specials, log, cur_hp)
 
 @router.message(Nav.hunt, F.text == "↩️ Бочком назад")
 async def retreat(message: Message, state: FSMContext):
