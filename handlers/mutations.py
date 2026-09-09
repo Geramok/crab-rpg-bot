@@ -276,3 +276,62 @@ async def action_upgrade(call: CallbackQuery):
         await call.answer(f"Не хватает ДНК! Нужно {format_number(cost)} 🧬", show_alert=True)
         
     await _show_mutation_detail(call, variant_key)
+
+@router.callback_query(F.data.startswith("open_chest_"))
+async def open_event_chest(call: CallbackQuery):
+    chest_type_raw = call.data.replace("open_chest_", "")
+    # Превращаем '1' в число 1, но оставляем 'default' строкой
+    chest_type = int(chest_type_raw) if chest_type_raw.isdigit() else chest_type_raw
+    user_id = call.from_user.id
+    
+    # 1. Проверяем наличие сундука и списываем 1 шт.
+    has_chest = await database.run_async(database.try_spend_chest, user_id, chest_type, 1)
+    if not has_chest:
+        await call.answer("У тебя нет этого сундука или он уже открыт!", show_alert=True)
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except:
+            pass
+        return
+        
+    # 2. Получаем мутации игрока, чтобы не выдать дубликат
+    owned_mutations = await database.run_async(database.get_mutations_v2, user_id)
+    owned_keys = [m["variant_key"] for m in owned_mutations]
+    
+    # 3. Генерируем лут
+    loot = await database.run_async(roll_chest_loot, chest_type, owned_keys)
+    
+    # 4. Выдаем награды в базу данных
+    user = await database.run_async(database.get_user, user_id)
+    if loot["shells"] > 0:
+        await database.run_async(database.update_user, user_id, nautilus_shells=user["nautilus_shells"] + loot["shells"])
+        
+    stone_texts = []
+    for color, lvl in loot["stones"]:
+        await database.run_async(database.add_stone, user_id, color, lvl, 1)
+        stone_texts.append(f"{STONE_COLORS[color]['name']} камень (ур. {lvl})")
+        
+    mut_text = ""
+    if loot["mutation"]:
+        mut = loot["mutation"]
+        await database.run_async(database.add_new_mutation, user_id, mut["key"], mut["slot"])
+        mut_text = (
+            f"\n\n🎉 <b>ГЕНЕТИЧЕСКИЙ ПРОРЫВ!</b>\n"
+            f"Тебе выпала легендарная мутация: <b>{mut['name']}</b>!\n"
+            f"Загляни в Лабораторию, чтобы надеть её."
+        )
+        
+    # 5. Собираем и выводим итоговое сообщение
+    shells_text = f"🐚 Ракушки наутилуса: {loot['shells']} шт.\n" if loot["shells"] > 0 else ""
+    stones_str = "\n".join([f"💎 {st}" for st in stone_texts]) if stone_texts else "Ничего примечательного."
+    
+    final_text = (
+        f"🎁 <b>Сундук открыт!</b> Вот твоя добыча:\n\n"
+        f"{shells_text}"
+        f"{stones_str}"
+        f"{mut_text}"
+    )
+    
+    # Убираем кнопку и показываем результат
+    await call.message.edit_text(final_text)
+    await call.answer()
