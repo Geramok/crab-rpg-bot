@@ -7,7 +7,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 import database
-from data import CRABS, SPECIAL_MUTATIONS, SHIELD_ABILITY, MARK_ABILITY, UNIQUE_ABILITIES
+from data import CRABS, SHIELD_ABILITY, MARK_ABILITY, UNIQUE_ABILITIES
 from game_logic import get_effective_stats, get_mutation_variant, level_up_cost, get_depth_zone_name, get_molt_rank, format_number
 from keyboards import profile_kb, kb, BACK, other_profile_kb
 from states import Nav
@@ -47,18 +47,21 @@ async def _show_other_profile_text(target_user):
 async def _characteristics_text_and_kb(user_id):
     user = await database.run_async(database.get_user, user_id)
     stones = await database.run_async(database.get_stones, user_id)
-    mutations = await database.run_async(database.get_mutations, user_id)
+    mutations = await database.run_async(database.get_mutations_v2, user_id)
     stats = get_effective_stats(user, stones, mutations)
     cost = level_up_cost(user["crab_level"], user["molts"])
 
     mutation_names = []
-    for slot, m in mutations.items():
-        if m["equipped"] and m["level"] > 0 and m.get("variant_key"):
-            variant = get_mutation_variant(slot, m["variant_key"])
+    for m in mutations:
+        if m["equipped"] and m.get("variant_key"):
+            variant = get_mutation_variant(m["slot"], m["variant_key"])
             if variant:
-                mutation_names.append(f"{variant['name']} ({m['level']})")
-    special = await database.run_async(database.get_special_mutations, user_id)
-    mutation_names += [SPECIAL_MUTATIONS[k]["name"] for k, v in special.items() if v["equipped"]]
+                # Выделяем легендарные мутации в профиле
+                if variant.get("is_special"):
+                    mutation_names.append(f"🌟 {variant['name']} ({m['level']})")
+                else:
+                    mutation_names.append(f"{variant['name']} ({m['level']})")
+                    
     mutations_txt = ", ".join(mutation_names) if mutation_names else "нет"
 
     unique = UNIQUE_ABILITIES.get(user["crab_type"], UNIQUE_ABILITIES[1])
