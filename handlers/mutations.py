@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 import database
-from data import MUTATION_SLOT_NAMES, STAT_LABELS, MUTATION_VARIANTS, SPECIAL_MUTATIONS, STONE_COLORS
+from data import MUTATION_SLOT_NAMES, STAT_LABELS, MUTATION_VARIANTS, STONE_COLORS
 from game_logic import (
     molt_required_level, dna_points_for_molt, cost_new_mutation, cost_upgrade_mutation,
     roll_mutation_variant, get_mutation_variant, apply_permanent_boost, format_number, roll_chest_loot
