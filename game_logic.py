@@ -5,7 +5,7 @@
 import random
 
 from data import (
-    CRABS, MUTATION_SLOT_BASE_COST, MUTATION_VARIANTS,
+    CRABS, MUTATION_SLOT_BASE_COST, MUTATION_VARIANTS, EVENT_CHESTS,
     STONE_COLORS, STONE_EFFECT_BONUS, STONE_LEVEL_CHANCE,
     MYTHIC_EVENT_UNLOCK_MOLTS, MYTHIC_EVENT_UNLOCK_MAX_METERS, MYTHIC_EVENT_UNLOCK_KILLS,
     MONSTERS, DEPTH_ZONES, DEPTH_BARRIERS, MOLT_RANKS, PLAYER_MISS_CHANCE,
@@ -36,18 +36,12 @@ def dna_points_for_molt(molts, crab_level):
     return round(base + bonus)
 
 
-def mutation_cost(slot, target_level, total_levels_owned):
-    base = MUTATION_SLOT_BASE_COST[slot]
-    cost = base * (target_level ** 1.35) * (1 + total_levels_owned * 0.10)
-    return max(1, round(cost))
-
-
 def roll_mutation_variant(slot):
     return random.choice(MUTATION_VARIANTS[slot])
 
 
 def get_mutation_variant(slot, variant_key):
-    for v in MUTATION_VARIANTS[slot]:
+    for v in MUTATION_VARIANTS.get(slot, []):
         if v["key"] == variant_key:
             return v
     return None
@@ -56,19 +50,15 @@ def get_mutation_variant(slot, variant_key):
 # ---------------- Монстры ----------------
 
 def total_mutation_levels(mutations):
-    """Суммарный уровень ВСЕХ купленных мутаций (ноги+панцирь+клешни вместе) —
-    именно это число сравнивается с порогом стены прокачки."""
+    """Суммарный уровень ВСЕХ купленных мутаций."""
     if not mutations:
         return 0
+    if isinstance(mutations, list):
+        return sum(m.get("level", 0) for m in mutations)
     return sum(m.get("level", 0) for m in mutations.values())
 
 
 def get_blocking_barrier(current_meters, mutations):
-    """Возвращает (метры_барьера, нужно_уровней) первой стены прокачки, на
-    которую игрок уже наткнулся (текущая позиция дошла до барьера или дальше),
-    но суммарный уровень мутаций для её прохода ещё не набран. None — если
-    сейчас ничего не блокирует (либо барьеров впереди нет, либо все уже
-    пройдены по уровню мутаций)."""
     total = total_mutation_levels(mutations)
     for barrier_meters, required in DEPTH_BARRIERS:
         if current_meters >= barrier_meters and total < required:
@@ -77,11 +67,6 @@ def get_blocking_barrier(current_meters, mutations):
 
 
 def next_monster_meters(current_meters, mutations=None):
-    """Обычный случайный шаг вперёд — НО если по пути встретится ещё не
-    пройденная стена прокачки (см. DEPTH_BARRIERS), продвижение упирается
-    ровно в неё и дальше не идёт, пока не наберётся нужный суммарный уровень
-    мутаций. mutations=None (по умолчанию) отключает проверку барьеров —
-    так старый код без учёта мутаций не ломается."""
     step = 1
     new_meters = current_meters + step
     if mutations is None:
@@ -92,7 +77,7 @@ def next_monster_meters(current_meters, mutations=None):
         if current_meters < barrier_meters <= new_meters and total < required:
             return barrier_meters
         if current_meters >= barrier_meters and total < required:
-            return current_meters  # уже стоим на непройденном барьере — топчемся на месте
+            return current_meters 
     return new_meters
 
 
@@ -104,11 +89,6 @@ def _base_monster_numbers(meters):
 
 
 def eligible_monsters(meters):
-    """Существа, доступные на данной глубине. Учитывает и min_meters, и
-    max_meters (если max_meters не задан — вид доступен на любой глубине
-    выше min_meters, как левиафанёнок). ВАЖНО: раньше здесь проверялся
-    только min_meters — из-за этого добавленный в data.py max_meters ни на
-    что не влиял, монстры не переставали попадаться на большой глубине."""
     pool = [
         m for m in MONSTERS
         if m["min_meters"] <= meters <= m.get("max_meters", float("inf"))
@@ -117,12 +97,6 @@ def eligible_monsters(meters):
 
 
 def roll_monster(meters, elite_mult=1.0):
-    """Собирает конкретного противника на метре meters: случайный вид из
-    доступных на этой глубине (с учётом веса — редкие 'иконки' зон весят
-    меньше и потому встречаются реже обычных существ) + числа, посчитанные
-    по базовой формуле, помноженные на индивидуальные множители вида (и
-    elite_mult для усиленных встреч — золото тоже растёт вместе с силой,
-    сложнее бой — больше награда)."""
     pool = eligible_monsters(meters)
     weights = [m.get("weight", 10) for m in pool]
     species = random.choices(pool, weights=weights, k=1)[0]
@@ -139,9 +113,6 @@ def roll_monster(meters, elite_mult=1.0):
 
 
 def is_guard_camp_meter(previous_meters, new_meters):
-    """Больше не вызывается из hunt.py (лагеря стражей заменены на элитные
-    одиночные встречи, см. is_elite_encounter_meter) — оставлено на случай,
-    если понадобится вернуть."""
     return (new_meters // GUARD_CAMP_INTERVAL) > (previous_meters // GUARD_CAMP_INTERVAL)
 
 
@@ -150,9 +121,6 @@ def roll_guard_camp(meters):
 
 
 def is_elite_encounter_meter(previous_meters, new_meters):
-    """Одиночный чуть усиленный монстр вместо обычного — когда путь
-    пересекает границу, кратную ELITE_ENCOUNTER_INTERVAL метров (заменяет
-    прежние лагеря стражей каждые 100м)."""
     return (new_meters // ELITE_ENCOUNTER_INTERVAL) > (previous_meters // ELITE_ENCOUNTER_INTERVAL)
 
 
@@ -167,7 +135,6 @@ def get_depth_zone_name(meters):
 
 
 def get_molt_rank(molts):
-    """Звание по числу пройденных линек - чисто флейвор для профиля."""
     name = MOLT_RANKS[0][1]
     for threshold, rank_name in MOLT_RANKS:
         if molts >= threshold:
@@ -178,9 +145,6 @@ def get_molt_rank(molts):
 
 
 def roll_dig_loot(hours):
-    """Камни: строго ЛИНЕЙНО от часов — короткое копание никогда не выгоднее
-    длинного за то же суммарное время (защита от абуза частыми короткими
-    сессиями)."""
     n = max(1, round(hours * DIG_STONES_PER_HOUR * random.uniform(0.85, 1.15)))
     loot = []
     colors = list(STONE_COLORS.keys())
@@ -199,7 +163,6 @@ def roll_dig_loot(hours):
 
 
 def roll_dig_resources(hours):
-    """Ресурсы для крафта тоже линейно от времени копания."""
     found = []
     ticks = max(1, round(hours))
     for _ in range(ticks):
@@ -234,10 +197,11 @@ def get_effective_stats(user, stones, mutations=None):
         stats[effect] += bonus
 
     if mutations:
-        for slot, m in mutations.items():
+        mut_list = mutations if isinstance(mutations, list) else [{"slot": k, **v} for k, v in mutations.items()]
+        for m in mut_list:
             if not (m and m.get("equipped") and m.get("level", 0) > 0 and m.get("variant_key")):
                 continue
-            variant = get_mutation_variant(slot, m["variant_key"])
+            variant = get_mutation_variant(m["slot"], m["variant_key"])
             if not variant:
                 continue
             level = m["level"]
@@ -249,7 +213,6 @@ def get_effective_stats(user, stones, mutations=None):
     stats["damage"] = max(1.0, stats["damage"])
     stats["max_hp"] = max(10, round(stats["max_hp"]))
 
-    # Нектар силы — временный бафф урона (см. handlers/craft.py)
     if user.get("buff_expires_ts") and user.get("buff_damage_mult"):
         import time
         if user["buff_expires_ts"] > int(time.time()):
@@ -258,10 +221,47 @@ def get_effective_stats(user, stones, mutations=None):
     return stats
 
 
+def get_equipped_special_effects(mutations):
+    """Возвращает set всех особых эффектов (poison, puncture и т.д.) от надетых мутаций."""
+    specials = set()
+    if not mutations:
+        return specials
+    mut_list = mutations if isinstance(mutations, list) else [{"slot": k, **v} for k, v in mutations.items()]
+    for m in mut_list:
+        if m.get("equipped") and m.get("variant_key"):
+            variant = get_mutation_variant(m["slot"], m["variant_key"])
+            if variant and variant.get("special_effect"):
+                specials.add(variant["special_effect"])
+    return specials
+
+
+def roll_chest_loot(chest_type, owned_variant_keys):
+    """Генерирует лут из сундука (ракушки, камни, и шанс на легендарную мутацию)."""
+    chest_data = EVENT_CHESTS.get(chest_type, EVENT_CHESTS["default"])
+    loot = {
+        "shells": chest_data.get("shells", 0),
+        "stones": [],
+        "mutation": None
+    }
+    
+    colors = list(STONE_COLORS.keys())
+    for _ in range(chest_data.get("stones", 0)):
+        color = random.choice(colors)
+        loot["stones"].append((color, chest_data.get("stone_lvl", 3)))
+        
+    if random.random() * 100 <= chest_data.get("mut_chance", 0.0):
+        possible_muts = []
+        for slot, variants in MUTATION_VARIANTS.items():
+            for v in variants:
+                if v.get("is_special") and v["key"] not in owned_variant_keys:
+                    possible_muts.append({"key": v["key"], "slot": slot, "name": v["name"]})
+        if possible_muts:
+            loot["mutation"] = random.choice(possible_muts)
+            
+    return loot
+
+
 def player_attack(stats, monster_evasion=0, force_crit=False):
-    """Считает урон одного тапа. monster_evasion — доп. шанс промаха ИМЕННО
-    из-за особенностей вида существа (см. data.MONSTERS), не улучшается игроком.
-    Возвращает (урон, был_ли_крит, промах_ли)."""
     if random.random() * 100 < (PLAYER_MISS_CHANCE + monster_evasion):
         return 0, False, True
     dmg = stats["damage"] * random.uniform(0.9, 1.1)
@@ -291,10 +291,6 @@ def apply_permanent_boost(amount, user):
 
 
 def apply_idle_regen(user, stats, now):
-    """Прочность НЕ восстанавливается мгновенно между боями — только
-    постепенно, пока игрок не в бою (полное восстановление занимает ~30 минут
-    простоя — достаточно, чтобы не быть мгновенным чит-хилом, но не заставлять
-    ждать часами между короткими игровыми сессиями)."""
     if user["cur_hp"] >= stats["max_hp"]:
         return stats["max_hp"]
     last_ts = user["last_hp_regen_ts"] or now
@@ -306,7 +302,6 @@ def apply_idle_regen(user, stats, now):
 
 
 def defeat_knockback_meters(cur_meters):
-    """При поражении краба отбрасывает назад на 1 метр"""
     knockback = 1
     return max(1, cur_meters - knockback)
 
@@ -335,13 +330,12 @@ def shop_gold_reward(user, levels_worth):
 
 
 def shop_dna_reward(mutations, upgrades_worth):
-    total_levels = sum(m.get("level", 0) for m in mutations.values()) if mutations else 0
-    costs = []
-    for slot in MUTATION_SLOT_BASE_COST:
-        cur_level = mutations.get(slot, {}).get("level", 0) if mutations else 0
-        costs.append(mutation_cost(slot, cur_level + 1, total_levels))
-    avg_cost = sum(costs) / len(costs)
-    return max(5, round(avg_cost * upgrades_worth))
+    avg_level = 1
+    if mutations:
+        mut_list = mutations if isinstance(mutations, list) else mutations.values()
+        total_lvls = sum(m.get("level", 0) for m in mut_list)
+        avg_level = max(1, total_lvls // max(1, len(mut_list)))
+    return max(5, round(cost_upgrade_mutation(avg_level) * upgrades_worth))
 
 
 def mythic_events_unlocked(user):
@@ -351,48 +345,31 @@ def mythic_events_unlocked(user):
         or user["kills"] >= MYTHIC_EVENT_UNLOCK_KILLS
     )
 
+
 def format_number(num: int) -> str:
-    """
-    Превращает большие числа в красивый текст для вывода на экран.
-    Поддерживает: тысячи (к), миллионы (м), миллиарды (б), триллионы (т), квадриллионы (кв).
-    """
-    # Защита: отрицательные числа возвращаем как есть
     if num < 0:
         return str(num)
-        
-    # Квадриллионы (15 нулей)
     if num >= 1_000_000_000_000_000:
         formatted = f"{num / 1_000_000_000_000_000:.1f}кв"
         return formatted.replace(".0кв", "кв")
-        
-    # Триллионы (12 нулей)
     elif num >= 1_000_000_000_000:
         formatted = f"{num / 1_000_000_000_000:.1f}т"
         return formatted.replace(".0т", "т")
-        
-    # Миллиарды (9 нулей) - используем "б" (биллион), чтобы не путать с "м" (миллион)
     elif num >= 1_000_000_000:
         formatted = f"{num / 1_000_000_000:.1f}б"
         return formatted.replace(".0б", "б")
-        
-    # Миллионы (6 нулей)
     elif num >= 1_000_000:
         formatted = f"{num / 1_000_000:.1f}м"
         return formatted.replace(".0м", "м")
-        
-    # Тысячи (3 нуля)
     elif num >= 1_000:
         formatted = f"{num / 1_000:.1f}к"
         return formatted.replace(".0к", "к")
-        
-    # Числа меньше 1000 возвращаем обычным текстом
     return str(num)
 
+
 def cost_new_mutation(owned_count):
-    """Цена покупки совершенно новой мутации. Растет с каждой новой покупкой."""
     base_cost = 25
-    return base_cost + (owned_count * 35)  # 25, 60, 95, 130...
+    return base_cost + (owned_count * 35)
 
 def cost_upgrade_mutation(current_level):
-    """Цена улучшения конкретной мутации. Зависит только от ее уровня."""
     return max(10, round(15 * (current_level ** 1.4)))
