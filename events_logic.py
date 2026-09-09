@@ -1,20 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Логика завершения ивента и раздачи наград. Используется и из ручной админ-команды
-/endboss, и из автоматического планировщика ивентов (bot.py).
-
-Важно: награды раздаются НЕ строго топовым игрокам по урону, а через взвешенную
-лотерею (вес = корень из урона) — так шанс получить редкую мутацию есть у любого,
-кто реально участвовал, а не только у задротов с самым большим уроном.
+Логика завершения ивента и раздачи наград. 
+Раздает сундуки в зависимости от места по нанесенному урону.
 """
-import math
-import random
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 import database
-from data import STONE_COLORS, SPECIAL_MUTATIONS
+from data import EVENT_CHESTS
 
-MIN_DAMAGE_THRESHOLD = 30  # отсекаем случайные 1 клик мимо, но не более того
-
+MIN_DAMAGE_THRESHOLD = 30  # отсекаем случайные 1 клик мимо
 
 async def finish_event(bot, event):
     participants = await database.run_async(database.get_all_event_participants, event["id"])
@@ -25,63 +19,54 @@ async def finish_event(bot, event):
     if not qualified:
         return []
 
-    # Всем, кто реально участвовал, — гарантированная базовая награда (раковины + камень)
-    for p in qualified:
-        uid = p["user_id"]
-        user = await database.run_async(database.get_user, uid)
-        if not user:
-            continue
-        await database.run_async(
-            database.update_user, uid,
-            boss_kills=user["boss_kills"] + 1, nautilus_shells=user["nautilus_shells"] + 2,
-        )
-        color = random.choice(list(STONE_COLORS.keys()))
-        await database.run_async(database.add_stone, uid, color, 1, 1)
-
-    # Жемчужные кейсы (особые мутации) — честная лотерея с весом sqrt(урон), чтобы
-    # не только топ по урону имел шанс, но и активные игроки послабее
-    cases_count = max(1, round(len(qualified) * 0.35))
-    ids = [p["user_id"] for p in qualified]
-    weights = [math.sqrt(p["damage"]) for p in qualified]
-    winners = database_weighted_pick(ids, weights, cases_count)
+    # Сортируем участников по урону (от большего к меньшему) для распределения мест
+    qualified.sort(key=lambda x: x["damage"], reverse=True)
 
     results = []
-    for uid in winners:
+    for rank, p in enumerate(qualified, start=1):
+        uid = p["user_id"]
         user = await database.run_async(database.get_user, uid)
         if not user:
             continue
-        special = random.choice(list(SPECIAL_MUTATIONS.keys()))
-        await database.run_async(database.add_special_mutation, uid, special)
-        await database.run_async(database.update_user, uid, nautilus_shells=user["nautilus_shells"] + 5)
-        results.append((uid, special))
+
+        # Увеличиваем счетчик убитых боссов
+        await database.run_async(
+            database.update_user, uid,
+            boss_kills=user["boss_kills"] + 1
+        )
+
+        # Определяем редкость сундука по месту в топе
+        if rank == 1:
+            chest_type = 1  # Жемчужный
+        elif rank == 2:
+            chest_type = 2  # Золотой
+        elif rank == 3:
+            chest_type = 3  # Роскошный
+        else:
+            chest_type = "default"  # Старый сундук для всех остальных
+
+        chest_data = EVENT_CHESTS[chest_type]
+
+        # Выдаем сундук в инвентарь (в базу данных)
+        await database.run_async(database.add_chest, uid, chest_type, 1)
+        results.append((uid, chest_type))
+
+        # Создаем инлайн-кнопку для открытия сундука
+        ikb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 Открыть сундук", callback_data=f"open_chest_{chest_type}")]
+        ])
+
+        place_text = f"Ты занял <b>{rank}-е место</b> по урону!" if rank <= 3 else "Ты достойно сражался наравне со всеми!"
+        msg_text = (
+            f"🎉 Ивент «{event['name']}» завершён!\n"
+            f"{place_text}\n\n"
+            f"Среди кораллов и обломков панциря босса ты замечаешь странный предмет... "
+            f"Это <b>{chest_data['name']}</b>!"
+        )
 
         try:
-            await bot.send_message(
-                uid,
-                f"🎉 Ивент «{event['name']}» завершён! Тебе выпал жемчужный кейс — "
-                f"новая мутация «{SPECIAL_MUTATIONS[special]['name']}» уже в твоём инвентаре!",
-            )
-        except Exception:
-            pass
-
-    # Уведомляем остальных участников без кейса — просто про базовые награды
-    winner_ids = {uid for uid, _ in results}
-    for p in qualified:
-        uid = p["user_id"]
-        if uid in winner_ids:
-            continue
-        try:
-            await bot.send_message(
-                uid,
-                f"🐉 Ивент «{event['name']}» завершён. Спасибо за участие! "
-                f"Награда за участие (раковины и камень) уже у тебя в инвентаре.",
-            )
+            await bot.send_message(uid, msg_text, reply_markup=ikb)
         except Exception:
             pass
 
     return results
-
-
-def database_weighted_pick(ids, weights, k):
-    from game_logic import weighted_sample_without_replacement
-    return weighted_sample_without_replacement(ids, weights, k)
