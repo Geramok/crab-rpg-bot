@@ -306,7 +306,7 @@ STONE_EFFECT_BONUS = {
     "crit_chance": {1: 0.15, 2: 0.35, 3: 0.7},
     "crit_damage": {1: 0.4, 2: 1.0, 3: 2.0},
 }
-STONE_LEVEL_CHANCE = {1: 0.8, 2: 0.7, 3: 0.05}
+STONE_LEVEL_CHANCE = {1: 0.5, 2: 0.35, 3: 0.25}
 DIG_STONES_PER_HOUR = 0.5
 DIG_DURATION_OPTIONS_HOURS = [2, 4, 16, 24]
 
