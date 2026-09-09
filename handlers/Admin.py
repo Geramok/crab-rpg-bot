@@ -9,12 +9,12 @@ from events_logic import finish_event
 router = Router()
 
 # Укажи свой числовой Telegram ID без кавычек
-ADMIN_ID = ТВОЙ_TELEGRAM_ID
+ADMIN_ID = 1855651682
 
 @router.message(Command("endboss"))
 async def admin_end_boss(message: Message):
     # Защита: если команду пишет обычный игрок, бот просто промолчит
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id != 1855651682:
         return 
 
     # Проверяем, есть ли сейчас активный босс
