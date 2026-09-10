@@ -90,6 +90,8 @@ async def show_characteristics(message: Message):
 async def level_up(call: CallbackQuery, state: FSMContext):
     user = await database.run_async(database.get_user, call.from_user.id)
     cost = level_up_cost(user["crab_level"], user["molts"])
+    
+    # 1. Быстрые проверки с выводом алертов
     if user["gold"] < cost:
         await call.answer(f"Не хватает золота! Нужно {format_number(cost)} 💰.", show_alert=True)
         return
@@ -98,9 +100,12 @@ async def level_up(call: CallbackQuery, state: FSMContext):
     if not spent:
         await call.answer("Не успел — баланс уже изменился, попробуй ещё раз.", show_alert=True)
         return
-    await database.run_async(database.update_user, call.from_user.id, crab_level=user["crab_level"] + 1)
+        
+    # 2. ✅ Ответ Telegram сразу после успешного списания золота, до долгих расчетов
     await call.answer("Уровень повышен!")
 
+    # 3. Выполнение долгих операций базы данных
+    await database.run_async(database.update_user, call.from_user.id, crab_level=user["crab_level"] + 1)
     text, ikb = await _characteristics_text_and_kb(call.from_user.id)
     await call.message.edit_text(f"✅ Уровень повышен!\n\n{text}", reply_markup=ikb)
 
