@@ -17,7 +17,7 @@ router = Router()
 async def open_hunt(message: Message, state: FSMContext):
     from handlers.hunt import perform_search
     await state.set_state(Nav.hunt)
-    await perform_search(message)
+    await perform_search(message, state)
     
 
 @router.message(Nav.main, F.text == "🧬 Мутации")
