@@ -36,10 +36,30 @@ async def show_profile(message: Message):
 async def _show_other_profile_text(target_user):
     zone = get_depth_zone_name(target_user["max_meters"])
     rank = get_molt_rank(target_user["molts"])
+    
+    # Подтягиваем статы чужого профиля для отображения мощи
+    stones = await database.run_async(database.get_stones, target_user["user_id"])
+    mutations = await database.run_async(database.get_mutations_v2, target_user["user_id"])
+    stats = get_effective_stats(target_user, stones, mutations)
+    
+    mutation_names = []
+    for m in mutations:
+        if m["equipped"] and m.get("variant_key"):
+            variant = get_mutation_variant(m["slot"], m["variant_key"])
+            if variant:
+                if variant.get("is_special"):
+                    mutation_names.append(f"🌟 {variant['name']}")
+                else:
+                    mutation_names.append(variant['name'])
+                    
+    mutations_txt = ", ".join(mutation_names) if mutation_names else "нет"
+    
     text = (
         f"🦀 <b>{target_user['nickname']}</b> — {rank}\n"
         f"{CRABS[target_user['crab_type']]['name']} · ур. {target_user['crab_level']} · {target_user['molts']} линек\n\n"
         f"📍 {zone} (рекорд {target_user['max_meters']} м)\n"
+        f"⚔️ Урон: {stats['damage']:.1f} | ❤️ Макс. ХП: {format_number(int(stats['max_hp']))}\n"
+        f"🧬 Мутации: {mutations_txt}\n\n"
         f"Убито: {format_number(target_user['kills'])} (боссов: {target_user['boss_kills']})"
     )
     return text
@@ -56,7 +76,6 @@ async def _characteristics_text_and_kb(user_id):
         if m["equipped"] and m.get("variant_key"):
             variant = get_mutation_variant(m["slot"], m["variant_key"])
             if variant:
-                # Выделяем легендарные мутации в профиле
                 if variant.get("is_special"):
                     mutation_names.append(f"🌟 {variant['name']} ({m['level']})")
                 else:
@@ -88,26 +107,38 @@ async def show_characteristics(message: Message):
 
 @router.callback_query(F.data == "level_up")
 async def level_up(call: CallbackQuery, state: FSMContext):
-    user = await database.run_async(database.get_user, call.from_user.id)
+    user_id = call.from_user.id
+    user = await database.run_async(database.get_user, user_id)
     cost = level_up_cost(user["crab_level"], user["molts"])
     
-    # 1. Быстрые проверки с выводом алертов
     if user["gold"] < cost:
         await call.answer(f"Не хватает золота! Нужно {format_number(cost)} 💰.", show_alert=True)
         return
 
-    spent = await database.run_async(database.try_spend, call.from_user.id, "gold", cost)
+    spent = await database.run_async(database.try_spend, user_id, "gold", cost)
     if not spent:
         await call.answer("Не успел — баланс уже изменился, попробуй ещё раз.", show_alert=True)
         return
         
-    # 2. ✅ Ответ Telegram сразу после успешного списания золота, до долгих расчетов
-    await call.answer("Уровень повышен!")
+    await call.answer("Уровень повышен! Здоровье восстановлено.")
 
-    # 3. Выполнение долгих операций базы данных
-    await database.run_async(database.update_user, call.from_user.id, crab_level=user["crab_level"] + 1)
-    text, ikb = await _characteristics_text_and_kb(call.from_user.id)
-    await call.message.edit_text(f"✅ Уровень повышен!\n\n{text}", reply_markup=ikb)
+    # Обновляем уровень в БД
+    await database.run_async(database.update_user, user_id, crab_level=user["crab_level"] + 1)
+    
+    # Пересчитываем статы, чтобы мгновенно вылечить краба до нового максимума ХП
+    user_updated = await database.run_async(database.get_user, user_id)
+    stones = await database.run_async(database.get_stones, user_id)
+    mutations = await database.run_async(database.get_mutations_v2, user_id)
+    new_stats = get_effective_stats(user_updated, stones, mutations)
+    
+    await database.run_async(
+        database.update_user, user_id, 
+        cur_hp=new_stats["max_hp"], 
+        last_hp_regen_ts=int(time.time())
+    )
+
+    text, ikb = await _characteristics_text_and_kb(user_id)
+    await call.message.edit_text(f"✅ Уровень повышен! Панцирь полностью восстановлен.\n\n{text}", reply_markup=ikb)
 
 @router.message(Nav.profile, F.text == "✏️ Сменить ник")
 async def change_nick_request(message: Message, state: FSMContext):
