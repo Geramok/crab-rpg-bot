@@ -16,8 +16,9 @@ from config import BOT_TOKEN, REDIS_DATA_TTL, REDIS_STATE_TTL, REDIS_URL
 from database import init_db
 
 from handlers import start, menu, hunt, mutations, profile, dig, inventory, misc, admin, shop, craft
-from handlers.middlewares import EnsureUserMiddleware
+from handlers.middlewares import EnsureUserMiddleware, SyncBufferMiddleware
 from events_scheduler import events_scheduler_loop
+from afk_saver import afk_saver_loop
 
 logging.basicConfig(level=logging.INFO)
 
@@ -107,6 +108,10 @@ async def main():
     # сбросилась при перезапуске контейнера) — мягкий возврат на /start вместо падения
     dp.message.middleware(EnsureUserMiddleware())
     dp.callback_query.middleware(EnsureUserMiddleware())
+    
+    # Синхронизатор буфера (отложенное сохранение фарма)
+    dp.message.middleware(SyncBufferMiddleware())
+    dp.callback_query.middleware(SyncBufferMiddleware())
 
     # Порядок важен: admin и start — раньше общих меню-хендлеров
     dp.include_router(admin.router)
@@ -124,9 +129,12 @@ async def main():
     try:
         await _safe_delete_webhook(bot)
 
-        # Фоновый планировщик мифических ивентов — сам стартует/завершает боссов,
-        # админу ничего нажимать не нужно (но /startboss и /endboss всё ещё доступны)
+        # Фоновый планировщик мифических ивентов — сам стартует/завершает боссов
         asyncio.create_task(events_scheduler_loop(bot))
+        
+        # Фоновое авто-сохранение AFK-игроков раз в минуту (если доступен Redis)
+        if hasattr(storage, 'redis'):
+            asyncio.create_task(afk_saver_loop(storage.redis))
 
         await dp.start_polling(bot)
     finally:
