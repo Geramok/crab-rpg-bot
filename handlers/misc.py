@@ -124,6 +124,12 @@ async def boss_attack(call: CallbackQuery, state: FSMContext):
         await call.answer("Ивенты пока недоступны — смотри условия в разделе Ивенты.", show_alert=True)
         return
 
+    # 🌟 Проверка на незаконченный обычный бой в быстрой памяти (защита буфера)
+    data = await state.get_data()
+    if "monster" in data:
+        await call.answer("Ты уже находишься в бою! Сначала закончи текущую охоту.", show_alert=True)
+        return
+
     # Проверка кулдауна (3.5 часа = 12600 секунд)
     now = int(time.time())
     if user.get("boss_cooldown_ts") and user["boss_cooldown_ts"] > now:
@@ -150,28 +156,35 @@ async def boss_attack(call: CallbackQuery, state: FSMContext):
         "accumulated_damage": 0
     }
     
-    # Полностью лечим краба перед битвой
-    from game_logic import get_effective_stats
+    # Полностью лечим краба перед битвой и собираем все статы
+    from game_logic import get_effective_stats, get_equipped_special_effects
     stones = await database.run_async(database.get_stones, call.from_user.id)
     mutations = await database.run_async(database.get_mutations_v2, call.from_user.id)
     stats = get_effective_stats(user, stones, mutations)
     full_hp = stats["max_hp"]
-
-    started = await database.run_async(database.try_start_new_hunt, call.from_user.id, json.dumps(boss_data), full_hp, now)
     
-    if not started:
-        await call.answer("Ты уже находишься в бою!", show_alert=True)
-        return
-
     await call.answer("Битва началась!")
     
     # Переводим в состояние охоты и отрисовываем экран
     await state.set_state(Nav.hunt)
     
-    from handlers.hunt import _render_single, _push_battle_update
+    from handlers.hunt import _render_single, _push_battle_update, _get_abilities
     from keyboards import hunt_kb
     text, ikb = _render_single(full_hp, stats["max_hp"], boss_data, user["crab_type"])
     
-    sent = await call.message.answer(text, reply_markup=hunt_kb(True))
-    await database.run_async(database.update_user, call.from_user.id, battle_message_id=sent.message_id)
-    await _push_battle_update(call.message, call.from_user.id, sent.message_id, text, ikb)
+    await call.message.answer("🫧 Вглядываемся в муть...", reply_markup=hunt_kb(True))
+    sent = await call.message.answer(text, reply_markup=ikb)
+    
+    # 🌟 Записываем босса прямо в FSM-память, чтобы боевая логика hunt.py его увидела
+    fsm_data = {
+        "cur_hp": full_hp,
+        "stats": stats,
+        "specials": list(get_equipped_special_effects(mutations)),
+        "crab_type": user["crab_type"],
+        "cur_meters": user["cur_meters"],
+        "max_meters": user["max_meters"],
+        "monster": boss_data,
+        "abilities": _get_abilities(boss_data),
+        "battle_message_id": sent.message_id
+    }
+    await state.update_data(**fsm_data)
