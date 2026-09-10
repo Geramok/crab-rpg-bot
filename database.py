@@ -385,3 +385,54 @@ def try_redeem_promo(user_id, code, gold=0, dna_points=0, nautilus_shells=0, per
                 (gold, dna_points, nautilus_shells, gold, user_id),
             )
         return True
+
+async def add_to_buffer(redis, user_id: int, gold: int = 0, kills: int = 0, cur_meters: int = 0, max_meters: int = 0):
+    """Добавляет фарм и метры во временный буфер Redis."""
+    key = f"user_buffer:{user_id}"
+    await redis.hincrby(key, "gold", gold)
+    await redis.hincrby(key, "kills", kills)
+    
+    # Записываем текущую глубину, чтобы краб двигался вперед
+    if cur_meters > 0:
+        await redis.hset(key, "cur_meters", cur_meters)
+        
+    # Обновляем рекорд метров, только если он побит
+    current_max = await redis.hget(key, "max_meters")
+    current_max = int(current_max) if current_max else 0
+    if max_meters > current_max:
+        await redis.hset(key, "max_meters", max_meters)
+        
+    await redis.hset(key, "last_action_ts", int(time.time()))
+
+async def flush_user_buffer(redis, user_id: int):
+    """Сливает буфер из Redis в SQLite и очищает его."""
+    key = f"user_buffer:{user_id}"
+    buffer_data = await redis.hgetall(key)
+    
+    if not buffer_data:
+        return False
+        
+    gold = int(buffer_data.get(b"gold", 0))
+    kills = int(buffer_data.get(b"kills", 0))
+    cur_meters = int(buffer_data.get(b"cur_meters", 0))
+    max_meters = int(buffer_data.get(b"max_meters", 0))
+    
+    user = await run_async(get_user, user_id)
+    if not user:
+        return False
+        
+    new_max_meters = max(user["max_meters"], max_meters)
+    new_cur_meters = cur_meters if cur_meters > 0 else user["cur_meters"]
+    
+    # Сохраняем в SQLite одним быстрым запросом
+    await run_async(
+        update_user, user_id,
+        gold=user["gold"] + gold,
+        total_earned_gold=user["total_earned_gold"] + gold,
+        kills=user["kills"] + kills,
+        cur_meters=new_cur_meters,
+        max_meters=new_max_meters
+    )
+    
+    await redis.delete(key)
+    return True
