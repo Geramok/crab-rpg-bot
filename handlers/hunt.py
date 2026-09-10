@@ -170,7 +170,7 @@ async def perform_search(message: Message, state: FSMContext):
     user = await database.run_async(database.get_user, user_id)
     redis_client = state.storage.redis
     
-    # Читаем буфер
+    # Подтягиваем данные из буфера
     buffered_meters = await redis_client.hget(f"user_buffer:{user_id}", "cur_meters")
     buffered_hp = await redis_client.hget(f"user_buffer:{user_id}", "cur_hp")
     buffered_ts = await redis_client.hget(f"user_buffer:{user_id}", "last_hp_regen_ts")
@@ -362,9 +362,11 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
     
     last_line = "\n".join(log)
     redis_client = state.storage.redis
+    now = int(time.time())
 
     # 1. Краб погиб
     if cur_hp <= 0:
+        await database.flush_user_buffer(redis_client, user_id)
         user_db = await database.run_async(database.get_user, user_id)
         recovered_hp = stats["max_hp"]
         
@@ -374,12 +376,12 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
             
             await database.run_async(
                 database.update_user, user_id,
-                cur_hp=recovered_hp, last_hp_regen_ts=int(time.time()), boss_cooldown_ts=cooldown_ts
+                cur_hp=recovered_hp, last_hp_regen_ts=now, boss_cooldown_ts=cooldown_ts
             )
             
             final_text = (
                 f"☠️ <b>Босс сокрушил тебя!</b>\n"
-                f"Ты нанёс <b>{format_number(target['accumulated_damage'])}</b> урона.\n"
+                f"Ты нанёс <b>{format_number(target['accumulated_damage'])}</b> урона (сохранено в рейтинге).\n"
                 f"Твой панцирь разбит, нужно 3.5 часа на восстановление.\n\n" + last_line
             )
             await state.set_data({})
@@ -390,7 +392,7 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
             knock_to = defeat_knockback_meters(user_db["cur_meters"])
             await database.run_async(
                 database.update_user, user_id,
-                cur_hp=recovered_hp, cur_meters=knock_to, last_hp_regen_ts=int(time.time())
+                cur_hp=recovered_hp, cur_meters=knock_to, last_hp_regen_ts=now
             )
             
             final_text = (
@@ -417,6 +419,7 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
         resource = roll_kill_resource()
         user_db = await database.run_async(database.get_user, user_id)
         
+        # Засада стражей
         if is_camp:
             monster["defeated"][monster["current"]] = True
             remaining = [i for i, d in enumerate(monster["defeated"]) if not d]
@@ -442,22 +445,17 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
             new_meters = monster["meters"]
             new_max_meters = max(user_db["max_meters"], new_meters)
             
+            # Всегда закидываем результат в буфер
+            await database.add_to_buffer(
+                redis_client, user_id, gold=total_gold, kills=3, 
+                cur_meters=new_meters, max_meters=new_max_meters,
+                cur_hp=cur_hp, last_hp_regen_ts=now
+            )
+
+            # Экстренное сохранение при выпадении ресурса
             if resource:
-                await database.run_async(
-                    database.update_user, user_id,
-                    gold=user_db["gold"] + total_gold,
-                    total_earned_gold=user_db["total_earned_gold"] + total_gold,
-                    kills=user_db["kills"] + 3,
-                    cur_meters=new_meters, max_meters=new_max_meters,
-                    cur_hp=cur_hp, last_hp_regen_ts=int(time.time())
-                )
+                await database.flush_user_buffer(redis_client, user_id)
                 await database.run_async(database.add_resource, user_id, resource)
-            else:
-                await database.add_to_buffer(
-                    redis_client, user_id, gold=total_gold, kills=3, 
-                    cur_meters=new_meters, max_meters=new_max_meters,
-                    cur_hp=cur_hp, last_hp_regen_ts=int(time.time())
-                )
             
             bonus_txt = " (учтён бонус 🪝 Проклятия)" if bonus_guard_index is not None else ""
             final_text = "🏆 <b>Засада зачищена!</b>\n" + last_line + f"\n\n💰 Получено золота: {format_number(total_gold)}{bonus_txt}"
@@ -466,6 +464,7 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
             await message.answer("Готов к новому рысканью по дну.", reply_markup=hunt_kb(False))
             return
 
+        # Обычный монстр
         gold = round(gold_reward(monster, stats, user_db) * gold_extra_mult)
         if "greed" in specials and random.random() * 100 < 20:
             gold *= 2
@@ -475,22 +474,17 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
         new_meters = monster["meters"]
         new_max_meters = max(user_db["max_meters"], new_meters)
         
+        # Всегда закидываем результат в буфер
+        await database.add_to_buffer(
+            redis_client, user_id, gold=gold, kills=1, 
+            cur_meters=new_meters, max_meters=new_max_meters,
+            cur_hp=cur_hp, last_hp_regen_ts=now
+        )
+        
+        # Экстренное сохранение при выпадении ресурса
         if resource:
-            await database.run_async(
-                database.update_user, user_id,
-                gold=user_db["gold"] + gold,
-                total_earned_gold=user_db["total_earned_gold"] + gold,
-                kills=user_db["kills"] + 1,
-                cur_meters=new_meters, max_meters=new_max_meters,
-                cur_hp=cur_hp, last_hp_regen_ts=int(time.time())
-            )
+            await database.flush_user_buffer(redis_client, user_id)
             await database.run_async(database.add_resource, user_id, resource)
-        else:
-            await database.add_to_buffer(
-                redis_client, user_id, gold=gold, kills=1, 
-                cur_meters=new_meters, max_meters=new_max_meters,
-                cur_hp=cur_hp, last_hp_regen_ts=int(time.time())
-            )
         
         bonus_txt = " (×2 от 🪝 Проклятия)" if gold_extra_mult != 1.0 else ""
         final_text = "🏆 <b>Победа!</b>\n" + last_line + f"\n\n💰 Золото: {format_number(gold)}{bonus_txt}"
@@ -499,6 +493,7 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
         await message.answer("Готов к новому рысканью по дну.", reply_markup=hunt_kb(False))
         return
 
+    # 3. Бой продолжается
     await state.update_data(monster=monster, cur_hp=cur_hp, abilities=abilities)
 
     if is_camp:
@@ -717,15 +712,24 @@ async def retreat(message: Message, state: FSMContext):
     data = await state.get_data()
     msg_id = data.get("battle_message_id")
     cur_hp = data.get("cur_hp")
+    monster = data.get("monster")
     
-    # Полностью очищаем память боя
-    await state.set_data({})
+    redis_client = state.storage.redis
+    user_id = message.from_user.id
     
+    # 1. Если сбегаем от босса — сохраняем урон перед сливом!
+    if monster and monster.get("is_boss") and monster.get("accumulated_damage", 0) > 0:
+        await database.run_async(database.add_event_damage, monster["event_id"], user_id, monster["accumulated_damage"])
+
+    # 2. Кидаем актуальное ХП в буфер перед сливом
     if cur_hp is not None:
-        await database.run_async(
-            database.update_user, message.from_user.id,
-            cur_hp=cur_hp, last_hp_regen_ts=int(time.time())
-        )
+        await database.add_to_buffer(redis_client, user_id, cur_hp=cur_hp, last_hp_regen_ts=int(time.time()))
+    
+    # 3. Принудительно сливаем буфер, чтобы сохранить всё накопленное и обновить SQLite
+    await database.flush_user_buffer(redis_client, user_id)
+    
+    # 4. Очищаем память боя
+    await state.set_data({})
         
     if msg_id:
         try:
