@@ -162,19 +162,25 @@ async def _push_battle_update(message, user_id, message_id, text, reply_markup=N
 async def perform_search(message: Message, state: FSMContext):
     user_id = message.from_user.id
     
-    # 1. Проверяем, не в бою ли игрок (читаем быструю память Redis)
     data = await state.get_data()
     if "monster" in data:
         await message.answer("⚔️ Ты уже в бою!", reply_markup=hunt_kb(True))
         return
         
     user = await database.run_async(database.get_user, user_id)
-    
-    # 🌟 Читаем буфер, чтобы узнать реальную глубину (если она еще не сохранена в SQLite)
     redis_client = state.storage.redis
+    
+    # Читаем буфер
     buffered_meters = await redis_client.hget(f"user_buffer:{user_id}", "cur_meters")
+    buffered_hp = await redis_client.hget(f"user_buffer:{user_id}", "cur_hp")
+    buffered_ts = await redis_client.hget(f"user_buffer:{user_id}", "last_hp_regen_ts")
+    
     if buffered_meters:
         user["cur_meters"] = int(buffered_meters)
+    if buffered_hp is not None:
+        user["cur_hp"] = float(buffered_hp)
+    if buffered_ts is not None:
+        user["last_hp_regen_ts"] = int(buffered_ts)
 
     stones = await database.run_async(database.get_stones, user_id)
     mutations = await database.run_async(database.get_mutations_v2, user_id)
@@ -203,11 +209,9 @@ async def perform_search(message: Message, state: FSMContext):
     if barrier_line:
         text = f"{barrier_line}\n\n{text}"
 
-    # Отправляем сообщение без записи в БД!
     await message.answer("🫧 Вглядываемся в муть...", reply_markup=hunt_kb(True))
     sent = await message.answer(text, reply_markup=ikb)
     
-    # Сохраняем все данные только в быструю память Redis
     fsm_data = {
         "cur_hp": healed_hp,
         "stats": stats,
@@ -221,22 +225,18 @@ async def perform_search(message: Message, state: FSMContext):
     }
     await state.update_data(**fsm_data)
 
-
 @router.message(StateFilter(Nav.hunt, Nav.main, None), F.text.contains("Рыскать по дну"))
 async def search_enemy(message: Message, state: FSMContext):
     await state.set_state(Nav.hunt)
     await perform_search(message, state)
 
-
 async def _load_battle_context(user_id, state: FSMContext):
-    """Моментально грузит бой из памяти Redis. База данных больше не нужна."""
     data = await state.get_data()
     if "monster" not in data:
         return None
     is_camp = data["monster"].get("is_camp", False)
     target = data["monster"]["guards"][data["monster"]["current"]] if is_camp else data["monster"]
     return data, is_camp, target
-
 
 @router.callback_query(F.data.startswith("pick_guard_"))
 async def pick_guard(call: CallbackQuery, state: FSMContext):
@@ -259,7 +259,6 @@ async def pick_guard(call: CallbackQuery, state: FSMContext):
     text, ikb = _render_camp(data["cur_hp"], data["stats"]["max_hp"], camp, data["crab_type"])
     await call.answer()
     await _push_battle_update(call.message, call.from_user.id, data.get("battle_message_id", call.message.message_id), text, ikb)
-
 
 def _do_combat_round(target, stats, specials, log, force_crit=False, guaranteed_hit=False,
                      guaranteed_miss=False, dmg_multiplier=1.0, extra_miss_chance=0):
@@ -323,7 +322,6 @@ def _do_combat_round(target, stats, specials, log, force_crit=False, guaranteed_
 
     return do_hit.heal
 
-
 def _resolve_monster_counter(target, stats, specials, log, evasion_penalty=0, block_percent=0, guaranteed_dodge=False):
     if guaranteed_dodge:
         log.append("💨 Ты уворачиваешься на рывке!")
@@ -353,7 +351,6 @@ def _resolve_monster_counter(target, stats, specials, log, evasion_penalty=0, bl
         log.append(f"Враг бьёт: -{format_number(mdmg)}")
     return mdmg
 
-
 async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, target, log):
     message = call.message
     cur_hp = fsm_data["cur_hp"]
@@ -375,7 +372,6 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
             await database.run_async(database.add_event_damage, target["event_id"], user_id, target["accumulated_damage"])
             cooldown_ts = int(time.time()) + int(3.5 * 3600)
             
-            # Сохраняем поражение в базу
             await database.run_async(
                 database.update_user, user_id,
                 cur_hp=recovered_hp, last_hp_regen_ts=int(time.time()), boss_cooldown_ts=cooldown_ts
@@ -383,7 +379,7 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
             
             final_text = (
                 f"☠️ <b>Босс сокрушил тебя!</b>\n"
-                f"Ты нанёс <b>{format_number(target['accumulated_damage'])}</b> урона (сохранено в рейтинге ивента).\n"
+                f"Ты нанёс <b>{format_number(target['accumulated_damage'])}</b> урона.\n"
                 f"Твой панцирь разбит, нужно 3.5 часа на восстановление.\n\n" + last_line
             )
             await state.set_data({})
@@ -392,7 +388,6 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
             return
         else:
             knock_to = defeat_knockback_meters(user_db["cur_meters"])
-            # Сохраняем откат метров в базу
             await database.run_async(
                 database.update_user, user_id,
                 cur_hp=recovered_hp, cur_meters=knock_to, last_hp_regen_ts=int(time.time())
@@ -400,7 +395,7 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
             
             final_text = (
                 f"💔 <b>Панцирь треснул!</b> Тебя отбросило назад до {format_number(knock_to)} м.\n"
-                f"Прочность восстановлена полностью — можешь пробовать снова прямо сейчас.\n\n" + last_line
+                f"Прочность восстановлена полностью — можешь пробовать снова.\n\n" + last_line
             )
             await state.set_data({})
             await _push_battle_update(message, user_id, msg_id, final_text)
@@ -422,7 +417,6 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
         resource = roll_kill_resource()
         user_db = await database.run_async(database.get_user, user_id)
         
-        # 2.1 Логика для Засады стражей
         if is_camp:
             monster["defeated"][monster["current"]] = True
             remaining = [i for i, d in enumerate(monster["defeated"]) if not d]
@@ -448,7 +442,6 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
             new_meters = monster["meters"]
             new_max_meters = max(user_db["max_meters"], new_meters)
             
-            # 🌟 Если выпал ценный лут — экстренно сохраняем в SQLite
             if resource:
                 await database.run_async(
                     database.update_user, user_id,
@@ -456,14 +449,14 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
                     total_earned_gold=user_db["total_earned_gold"] + total_gold,
                     kills=user_db["kills"] + 3,
                     cur_meters=new_meters, max_meters=new_max_meters,
-                    last_hp_regen_ts=int(time.time())
+                    cur_hp=cur_hp, last_hp_regen_ts=int(time.time())
                 )
                 await database.run_async(database.add_resource, user_id, resource)
             else:
-                # 🌟 Обычная победа — летит в быстрый буфер Redis!
                 await database.add_to_buffer(
                     redis_client, user_id, gold=total_gold, kills=3, 
-                    cur_meters=new_meters, max_meters=new_max_meters
+                    cur_meters=new_meters, max_meters=new_max_meters,
+                    cur_hp=cur_hp, last_hp_regen_ts=int(time.time())
                 )
             
             bonus_txt = " (учтён бонус 🪝 Проклятия)" if bonus_guard_index is not None else ""
@@ -473,7 +466,6 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
             await message.answer("Готов к новому рысканью по дну.", reply_markup=hunt_kb(False))
             return
 
-        # 2.2 Логика для обычного монстра
         gold = round(gold_reward(monster, stats, user_db) * gold_extra_mult)
         if "greed" in specials and random.random() * 100 < 20:
             gold *= 2
@@ -483,7 +475,6 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
         new_meters = monster["meters"]
         new_max_meters = max(user_db["max_meters"], new_meters)
         
-        # 🌟 Сохраняем в зависимости от ценности лута
         if resource:
             await database.run_async(
                 database.update_user, user_id,
@@ -491,13 +482,14 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
                 total_earned_gold=user_db["total_earned_gold"] + gold,
                 kills=user_db["kills"] + 1,
                 cur_meters=new_meters, max_meters=new_max_meters,
-                last_hp_regen_ts=int(time.time())
+                cur_hp=cur_hp, last_hp_regen_ts=int(time.time())
             )
             await database.run_async(database.add_resource, user_id, resource)
         else:
             await database.add_to_buffer(
                 redis_client, user_id, gold=gold, kills=1, 
-                cur_meters=new_meters, max_meters=new_max_meters
+                cur_meters=new_meters, max_meters=new_max_meters,
+                cur_hp=cur_hp, last_hp_regen_ts=int(time.time())
             )
         
         bonus_txt = " (×2 от 🪝 Проклятия)" if gold_extra_mult != 1.0 else ""
@@ -507,7 +499,6 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
         await message.answer("Готов к новому рысканью по дну.", reply_markup=hunt_kb(False))
         return
 
-    # 3. Бой продолжается — обновляем ТОЛЬКО быструю память
     await state.update_data(monster=monster, cur_hp=cur_hp, abilities=abilities)
 
     if is_camp:
@@ -516,7 +507,6 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
         text, ikb = _render_single(cur_hp, stats["max_hp"], monster, fsm_data["crab_type"], last_line=last_line)
 
     await _push_battle_update(message, user_id, msg_id, text, ikb)
-
 
 @router.callback_query(F.data == "hunt_attack")
 async def attack(call: CallbackQuery, state: FSMContext):
@@ -575,7 +565,6 @@ async def attack(call: CallbackQuery, state: FSMContext):
     fsm_data["cur_hp"] = cur_hp
     await _finish_turn(call, user_id, fsm_data, state, is_camp, target, log)
 
-
 @router.callback_query(F.data == "ability_shield")
 async def ability_shield(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
@@ -614,7 +603,6 @@ async def ability_shield(call: CallbackQuery, state: FSMContext):
 
     fsm_data["cur_hp"] = cur_hp
     await _finish_turn(call, user_id, fsm_data, state, is_camp, target, log)
-
 
 @router.callback_query(F.data == "ability_mark")
 async def ability_mark(call: CallbackQuery, state: FSMContext):
@@ -656,7 +644,6 @@ async def ability_mark(call: CallbackQuery, state: FSMContext):
 
     fsm_data["cur_hp"] = cur_hp
     await _finish_turn(call, user_id, fsm_data, state, is_camp, target, log)
-
 
 @router.callback_query(F.data == "ability_unique")
 async def ability_unique(call: CallbackQuery, state: FSMContext):
@@ -725,15 +712,21 @@ async def ability_unique(call: CallbackQuery, state: FSMContext):
     fsm_data["cur_hp"] = cur_hp
     await _finish_turn(call, user_id, fsm_data, state, is_camp, target, log)
 
-
 @router.message(Nav.hunt, F.text == "↩️ Бочком назад")
 async def retreat(message: Message, state: FSMContext):
     data = await state.get_data()
     msg_id = data.get("battle_message_id")
+    cur_hp = data.get("cur_hp")
     
     # Полностью очищаем память боя
     await state.set_data({})
     
+    if cur_hp is not None:
+        await database.run_async(
+            database.update_user, message.from_user.id,
+            cur_hp=cur_hp, last_hp_regen_ts=int(time.time())
+        )
+        
     if msg_id:
         try:
             await message.bot.edit_message_text(
