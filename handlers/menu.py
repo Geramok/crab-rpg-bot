@@ -12,15 +12,16 @@ from states import Nav, PARENT_STATE
 
 router = Router()
 
-
-@router.message(StateFilter(Nav.main, None), F.text.contains("Рыскать по дну"))
+# Звездочка '*' разрешает переход в Охоту из абсолютно любого раздела игры
+@router.message(StateFilter('*'), F.text.contains("Рыскать по дну"))
 async def open_hunt(message: Message, state: FSMContext):
     from handlers.hunt import perform_search
     await state.set_state(Nav.hunt)
     await perform_search(message, state)
     
 
-@router.message(Nav.main, F.text == "🧬 Мутации")
+# Звездочка '*' разрешает переход в Мутации из абсолютно любого раздела игры
+@router.message(StateFilter('*'), F.text == "🧬 Мутации")
 async def open_mutations_root(message: Message, state: FSMContext):
     await state.set_state(Nav.mutations_root)
     await message.answer(
@@ -31,12 +32,15 @@ async def open_mutations_root(message: Message, state: FSMContext):
     )
 
 
-@router.message(Nav.main, F.text == "📋 Меню")
+# Звездочка '*' разрешает переход в Меню из абсолютно любого раздела игры
+@router.message(StateFilter('*'), F.text == "📋 Меню")
 async def open_menu_root(message: Message, state: FSMContext):
     await state.set_state(Nav.menu_root)
     await message.answer("📋 <b>Меню</b>", reply_markup=menu_root_kb())
 
 
+# Внутренние разделы оставляем привязанными к Nav.menu_root, 
+# так как эти кнопки появляются только внутри самого Меню
 @router.message(Nav.menu_root, F.text == "🦀 Мой краб")
 async def open_profile(message: Message, state: FSMContext):
     from handlers.profile import show_profile
