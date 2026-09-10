@@ -386,8 +386,9 @@ def try_redeem_promo(user_id, code, gold=0, dna_points=0, nautilus_shells=0, per
             )
         return True
 
-async def add_to_buffer(redis, user_id: int, gold: int = 0, kills: int = 0, cur_meters: int = 0, max_meters: int = 0):
-    """Добавляет фарм и метры во временный буфер Redis."""
+# ---------------- БУФЕРИЗАЦИЯ ----------------
+async def add_to_buffer(redis, user_id: int, gold: int = 0, kills: int = 0, cur_meters: int = 0, max_meters: int = 0, cur_hp: float = None, last_hp_regen_ts: int = None):
+    """Добавляет фарм, метры и текущее здоровье во временный буфер Redis."""
     key = f"user_buffer:{user_id}"
     await redis.hincrby(key, "gold", gold)
     await redis.hincrby(key, "kills", kills)
@@ -401,6 +402,12 @@ async def add_to_buffer(redis, user_id: int, gold: int = 0, kills: int = 0, cur_
     current_max = int(current_max) if current_max else 0
     if max_meters > current_max:
         await redis.hset(key, "max_meters", max_meters)
+        
+    # Запоминаем текущее здоровье после боя
+    if cur_hp is not None:
+        await redis.hset(key, "cur_hp", str(cur_hp))
+    if last_hp_regen_ts is not None:
+        await redis.hset(key, "last_hp_regen_ts", last_hp_regen_ts)
         
     await redis.hset(key, "last_action_ts", int(time.time()))
 
@@ -417,6 +424,9 @@ async def flush_user_buffer(redis, user_id: int):
     cur_meters = int(buffer_data.get(b"cur_meters", 0))
     max_meters = int(buffer_data.get(b"max_meters", 0))
     
+    raw_hp = buffer_data.get(b"cur_hp")
+    raw_regen_ts = buffer_data.get(b"last_hp_regen_ts")
+    
     user = await run_async(get_user, user_id)
     if not user:
         return False
@@ -424,15 +434,22 @@ async def flush_user_buffer(redis, user_id: int):
     new_max_meters = max(user["max_meters"], max_meters)
     new_cur_meters = cur_meters if cur_meters > 0 else user["cur_meters"]
     
+    update_kwargs = {
+        "gold": user["gold"] + gold,
+        "total_earned_gold": user["total_earned_gold"] + gold,
+        "kills": user["kills"] + kills,
+        "cur_meters": new_cur_meters,
+        "max_meters": new_max_meters
+    }
+    
+    # Если в бою потратили здоровье, обновляем его
+    if raw_hp is not None:
+        update_kwargs["cur_hp"] = float(raw_hp)
+    if raw_regen_ts is not None:
+        update_kwargs["last_hp_regen_ts"] = int(raw_regen_ts)
+    
     # Сохраняем в SQLite одним быстрым запросом
-    await run_async(
-        update_user, user_id,
-        gold=user["gold"] + gold,
-        total_earned_gold=user["total_earned_gold"] + gold,
-        kills=user["kills"] + kills,
-        cur_meters=new_cur_meters,
-        max_meters=new_max_meters
-    )
+    await run_async(update_user, user_id, **update_kwargs)
     
     await redis.delete(key)
     return True
