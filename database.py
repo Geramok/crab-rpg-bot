@@ -17,17 +17,17 @@ if _db_dir:
     os.makedirs(_db_dir, exist_ok=True)
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
 
     global _wal_enabled
     if not _wal_enabled:
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=10000")
+        conn.execute("PRAGMA busy_timeout=15000")
         _wal_enabled = True
     else:
-        conn.execute("PRAGMA busy_timeout=10000")
+        conn.execute("PRAGMA busy_timeout=15000")
     return conn
 
 def _safe_migrate(conn, sql):
@@ -98,7 +98,6 @@ def init_db():
         )
         """)
         
-        # НОВАЯ ТАБЛИЦА ДЛЯ СУНДУКОВ
         conn.execute("""
         CREATE TABLE IF NOT EXISTS chests (
             user_id INTEGER, chest_type TEXT, count INTEGER DEFAULT 0,
@@ -393,17 +392,14 @@ async def add_to_buffer(redis, user_id: int, gold: int = 0, kills: int = 0, cur_
     await redis.hincrby(key, "gold", gold)
     await redis.hincrby(key, "kills", kills)
     
-    # Записываем текущую глубину, чтобы краб двигался вперед
     if cur_meters > 0:
         await redis.hset(key, "cur_meters", cur_meters)
         
-    # Обновляем рекорд метров, только если он побит
     current_max = await redis.hget(key, "max_meters")
     current_max = int(current_max) if current_max else 0
     if max_meters > current_max:
         await redis.hset(key, "max_meters", max_meters)
         
-    # Запоминаем текущее здоровье после боя
     if cur_hp is not None:
         await redis.hset(key, "cur_hp", str(cur_hp))
     if last_hp_regen_ts is not None:
@@ -412,7 +408,7 @@ async def add_to_buffer(redis, user_id: int, gold: int = 0, kills: int = 0, cur_
     await redis.hset(key, "last_action_ts", int(time.time()))
 
 async def flush_user_buffer(redis, user_id: int):
-    """Сливает буфер из Redis в SQLite и очищает его."""
+    """Атомарно сливает буфер из Redis в SQLite и очищает его."""
     key = f"user_buffer:{user_id}"
     buffer_data = await redis.hgetall(key)
     
@@ -426,30 +422,32 @@ async def flush_user_buffer(redis, user_id: int):
     
     raw_hp = buffer_data.get(b"cur_hp")
     raw_regen_ts = buffer_data.get(b"last_hp_regen_ts")
-    
-    user = await run_async(get_user, user_id)
-    if not user:
-        return False
-        
-    new_max_meters = max(user["max_meters"], max_meters)
-    new_cur_meters = cur_meters if cur_meters > 0 else user["cur_meters"]
-    
-    update_kwargs = {
-        "gold": user["gold"] + gold,
-        "total_earned_gold": user["total_earned_gold"] + gold,
-        "kills": user["kills"] + kills,
-        "cur_meters": new_cur_meters,
-        "max_meters": new_max_meters
-    }
-    
-    # Если в бою потратили здоровье, обновляем его
-    if raw_hp is not None:
-        update_kwargs["cur_hp"] = float(raw_hp)
-    if raw_regen_ts is not None:
-        update_kwargs["last_hp_regen_ts"] = int(raw_regen_ts)
-    
-    # Сохраняем в SQLite одним быстрым запросом
-    await run_async(update_user, user_id, **update_kwargs)
-    
+
+    def _atomic_db_update():
+        with closing(get_conn()) as conn, conn:
+            # Атомарное прибавление к существующим значениям прямо в SQL
+            query = """
+                UPDATE users 
+                SET gold = gold + ?,
+                    total_earned_gold = total_earned_gold + ?,
+                    kills = kills + ?,
+                    cur_meters = CASE WHEN ? > 0 THEN ? ELSE cur_meters END,
+                    max_meters = MAX(max_meters, ?)
+            """
+            params = [gold, gold, kills, cur_meters, cur_meters, max_meters]
+
+            if raw_hp is not None:
+                query += ", cur_hp = ?"
+                params.append(float(raw_hp))
+            if raw_regen_ts is not None:
+                query += ", last_hp_regen_ts = ?"
+                params.append(int(raw_regen_ts))
+
+            query += " WHERE user_id = ?"
+            params.append(user_id)
+            
+            conn.execute(query, params)
+
+    await run_async(_atomic_db_update)
     await redis.delete(key)
     return True
