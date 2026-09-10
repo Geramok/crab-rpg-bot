@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject
+from aiogram.types import TelegramObject, Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 import database
@@ -23,10 +23,10 @@ class EnsureUserMiddleware(BaseMiddleware):
                     "Пожалуйста, нажми /start, чтобы начать заново — "
                     "просто извиняемся, разработка всё в одном лице :("
                 )
-                if event.message:
-                    await event.message.answer(text)
-                elif event.callback_query:
-                    await event.callback_query.answer(text, show_alert=True)
+                if isinstance(event, Message):
+                    await event.answer(text)
+                elif isinstance(event, CallbackQuery):
+                    await event.answer(text, show_alert=True)
                 return
                 
         return await handler(event, data)
@@ -46,8 +46,8 @@ class SyncBufferMiddleware(BaseMiddleware):
             if current_state != "Nav:hunt":
                 await database.flush_user_buffer(redis_client, user.id)
             
-            # Если игрок в бою, но нажал кнопку другого меню (не связанную с атакой)
-            elif event.callback_query and not event.callback_query.data.startswith(("hunt_", "ability_", "pick_guard")):
+            # Если игрок в бою, но нажал инлайн-кнопку другого меню (не связанную с атакой)
+            elif isinstance(event, CallbackQuery) and not event.data.startswith(("hunt_", "ability_", "pick_guard")):
                 await database.flush_user_buffer(redis_client, user.id)
                 
         return await handler(event, data)
