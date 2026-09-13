@@ -299,14 +299,14 @@ STONE_COLORS = {
     "orange": {"name": "🟠 Оранжевый", "effect": "crit_damage"},
 }
 STONE_EFFECT_BONUS = {
-    "damage": {1: 1, 2: 2, 3: 4},
-    "max_hp": {1: 4, 2: 10, 3: 20},
+    "damage": {1: 3, 2: 5, 3: 7},
+    "max_hp": {1: 6, 2: 12, 3: 25},
     "evasion": {1: 0.15, 2: 0.35, 3: 0.7},
     "luck": {1: 0.15, 2: 0.35, 3: 0.7},
     "crit_chance": {1: 0.15, 2: 0.35, 3: 0.7},
     "crit_damage": {1: 0.4, 2: 1.0, 3: 2.0},
 }
-STONE_LEVEL_CHANCE = {1: 0.5, 2: 0.35, 3: 0.25}
+STONE_LEVEL_CHANCE = {1: 0.55, 2: 0.45, 3: 0.35}
 DIG_STONES_PER_HOUR = 0.5
 DIG_DURATION_OPTIONS_HOURS = [2, 4, 16, 24]
 
