@@ -480,11 +480,12 @@ async def get_nectars_data(user_id):
             }
         return {"active_nectar": None, "nectars_inv": {}, "strength_charges": 0}
 
-async def update_nectars_data(user_id, active_nectar=None, nectars_inv=None, strength_charges=None):
+async def update_nectars_data(user_id, active_nectar=False, nectars_inv=None, strength_charges=None):
     """Обновляет данные экипировки и инвентаря нектаров."""
     async with aiosqlite.connect(DB_PATH) as db:
         updates = []
         params = []
+        # Если active_nectar равен False, бот пропустит этот шаг и не сбросит твою экипировку!
         if active_nectar is not False: 
             updates.append("active_nectar = ?")
             params.append(active_nectar)
