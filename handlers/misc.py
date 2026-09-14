@@ -172,8 +172,9 @@ async def boss_attack(call: CallbackQuery, state: FSMContext):
     from keyboards import hunt_kb
         # Передаем "пустышку" нектаров, чтобы интерфейс босса остался классическим (только 1 кнопка)
     empty_nectars = {"active_nectar": None, "nectars_inv": {}, "strength_charges": 0, "combat_effects": {}}
-    text, ikb = _render_single(full_hp, stats["max_hp"], boss_data, user["crab_type"], empty_nectars)
-    
+    # Передаем cur_meters (число) вместо boss_data (строки)
+text, ikb = _render_single(full_hp, stats["max_hp"], user.get("cur_meters", 0), user["crab_type"], empty_nectars)
+
     await call.message.answer("🫧 Вглядываемся в муть...", reply_markup=hunt_kb(True))
     sent = await call.message.answer(text, reply_markup=ikb)
     
