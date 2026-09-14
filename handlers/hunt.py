@@ -92,10 +92,15 @@ def _abilities_buttons(abilities, crab_type):
     ]
 
 def _render_single(user_cur_hp, stats_max_hp, monster, crab_type, last_line=None):
+    # Безопасно получаем текущую глубину из данных монстра.
+    # Если её там вдруг не окажется, выведем "???" чтобы игра не упала.
+    meters = monster.get("meters", "???")
+    
     if monster.get("is_boss"):
         text = (
             f"<pre>{html.escape(monster['art'])}</pre>\n"
             f"🐉 <b>{monster['name']}</b>\n"
+            f"🌊 Глубина: <b>{format_number(meters)} м</b>\n" # <-- Добавлен метр глубины для босса
             f"{monster['hp_flavor']}\n"
             f"💥 Нанесено урона: <b>{format_number(monster.get('accumulated_damage', 0))}</b>\n\n"
             f"🦀 Ты:  [{_hp_bar(user_cur_hp, stats_max_hp)}] {format_number(max(user_cur_hp, 0))}/{format_number(stats_max_hp)}\n"
@@ -104,6 +109,23 @@ def _render_single(user_cur_hp, stats_max_hp, monster, crab_type, last_line=None
             text += f"\n{last_line}"
         buttons = [[ATTACK_BUTTON]]
         return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    abilities = _get_abilities(monster)
+    name_line = f"💪 <b>{monster['name']} (усилен)</b>" if monster.get("elite") else f"<b>{monster['name']}</b>"
+    text = (
+        f"<pre>{html.escape(monster['art'])}</pre>\n"
+        f"{name_line}\n"
+        f"🌊 Глубина: <b>{format_number(meters)} м</b>\n" # <-- Добавлен метр глубины для обычных мобов
+        f"❤️ Враг:  [{_hp_bar(monster['hp'], monster['max_hp'])}] {format_number(max(monster['hp'], 0))}/{format_number(monster['max_hp'])}\n"
+        f"🦀 Ты:    [{_hp_bar(user_cur_hp, stats_max_hp)}] {format_number(max(user_cur_hp, 0))}/{format_number(stats_max_hp)}\n"
+    )
+    status = _abilities_status_line(abilities, crab_type)
+    if status:
+        text += f"{status}\n"
+    if last_line:
+        text += f"\n{last_line}"
+    buttons = [[ATTACK_BUTTON]] + _abilities_buttons(abilities, crab_type)
+    return text, InlineKeyboardMarkup(inline_keyboard=buttons)
 
     abilities = _get_abilities(monster)
     name_line = f"💪 <b>{monster['name']} (усилен)</b>" if monster.get("elite") else f"<b>{monster['name']}</b>"
