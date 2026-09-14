@@ -250,6 +250,34 @@ STAT_LABELS = {
     "crit_chance": "крит. шансу", "crit_damage": "крит. урону", "max_hp": "прочности",
 }
 
+# ---------- НЕКТАРЫ (Зелья) ----------
+NECTARS_DATA = {
+    "strength": {
+        "name": "🔴 Нектар силы",
+        "desc": "Увеличивает урон на 20% на 5 боев. Нельзя выпить снова, пока эффект не спадет.",
+        "res_cost": {"shard": 3, "essence": 2, "bone": 1},
+        "stone_cost": {"color": "red", "level": 1, "count": 2}
+    },
+    "refreshing": {
+        "name": "🔵 Освежающий нектар",
+        "desc": "Мгновенно восстанавливает 35% от максимального ХП прямо в бою.",
+        "res_cost": {"shard": 2, "essence": 3, "bone": 1},
+        "stone_cost": {"color": "blue", "level": 1, "count": 2}
+    },
+    "rage": {
+        "name": "🟠 Нектар ярости",
+        "desc": "Жертвует 15% макс. ХП. Дает +50% уклонения и гарантированное попадание клешней, но снижает твой урон на 50% до конца боя. (ORA-ORA-ORA!)",
+        "res_cost": {"shard": 1, "essence": 2, "bone": 3},
+        "stone_cost": {"color": "orange", "level": 1, "count": 2}
+    },
+    "sparkling": {
+        "name": "🟢 Сверкающий нектар",
+        "desc": "Увеличивает добычу золота с текущего монстра в 2.5 раза.",
+        "res_cost": {"shard": 2, "essence": 2, "bone": 2},
+        "stone_cost": {"color": "green", "level": 1, "count": 2}
+    }
+}
+
 # ---------- СУНДУКИ ЗА ИВЕНТЫ ----------
 EVENT_CHESTS = {
     1: {"name": "⚪ Жемчужный сундук", "shells": 3, "stones": 4, "stone_lvl": 3, "mut_chance": 30.0},
