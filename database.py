@@ -3,6 +3,7 @@ import asyncio
 import os
 import sqlite3
 import time
+import json
 import aiosqlite
 from contextlib import closing
 
@@ -426,7 +427,6 @@ async def flush_user_buffer(redis, user_id: int):
 
     def _atomic_db_update():
         with closing(get_conn()) as conn, conn:
-            # Атомарное прибавление к существующим значениям прямо в SQL
             query = """
                 UPDATE users 
                 SET gold = gold + ?,
@@ -453,15 +453,10 @@ async def flush_user_buffer(redis, user_id: int):
     await redis.delete(key)
     return True
 
-import json
-import aiosqlite
-
-# Явно указываем имя файла твоей базы данных
-DB_NAME = "preview.db"
-
+# ---------------- НЕКТАРЫ ----------------
 async def auto_update_db_nectars():
     """Автоматически обновляет базу данных для системы нектаров."""
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         try:
             await db.execute("ALTER TABLE users ADD COLUMN active_nectar TEXT DEFAULT NULL")
             await db.execute("ALTER TABLE users ADD COLUMN nectars_inv TEXT DEFAULT '{}'")
@@ -469,11 +464,11 @@ async def auto_update_db_nectars():
             await db.commit()
             print("База данных: колонки нектаров успешно добавлены!")
         except Exception:
-            pass # Если колонки уже есть, скрипт пойдет дальше без ошибки
+            pass
 
 async def get_nectars_data(user_id):
     """Получает данные о нектарах пользователя."""
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT active_nectar, nectars_inv, strength_charges FROM users WHERE user_id = ?", (user_id,))
         row = await cursor.fetchone()
@@ -487,7 +482,7 @@ async def get_nectars_data(user_id):
 
 async def update_nectars_data(user_id, active_nectar=None, nectars_inv=None, strength_charges=None):
     """Обновляет данные экипировки и инвентаря нектаров."""
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         updates = []
         params = []
         if active_nectar is not False: 
@@ -506,25 +501,20 @@ async def update_nectars_data(user_id, active_nectar=None, nectars_inv=None, str
 
 def try_spend_stone(user_id, color, level, count):
     """Списывает камни для крафта нектаров."""
-    import sqlite3
-    with sqlite3.connect(DB_NAME) as db:
-        cursor = db.execute("SELECT count FROM stones WHERE user_id = ? AND color = ? AND level = ?", (user_id, color, level))
+    with closing(get_conn()) as conn, conn:
+        cursor = conn.execute("SELECT count FROM stones WHERE user_id = ? AND color = ? AND level = ?", (user_id, color, level))
         row = cursor.fetchone()
         if row and row[0] >= count:
-            db.execute("UPDATE stones SET count = count - ? WHERE user_id = ? AND color = ? AND level = ?", (count, user_id, color, level))
-            db.commit()
+            conn.execute("UPDATE stones SET count = count - ? WHERE user_id = ? AND color = ? AND level = ?", (count, user_id, color, level))
             return True
         return False
 
 def try_spend_resource(user_id, resource_key, count):
     """Проверяет наличие ресурса и списывает его."""
-    import sqlite3
-    with sqlite3.connect(DB_NAME) as db:
-        # Мы изменили resource_key на key внутри запроса к базе данных
-        cursor = db.execute("SELECT count FROM resources WHERE user_id = ? AND key = ?", (user_id, resource_key))
+    with closing(get_conn()) as conn, conn:
+        cursor = conn.execute("SELECT count FROM resources WHERE user_id = ? AND key = ?", (user_id, resource_key))
         row = cursor.fetchone()
         if row and row[0] >= count:
-            db.execute("UPDATE resources SET count = count - ? WHERE user_id = ? AND key = ?", (count, user_id, resource_key))
-            db.commit()
+            conn.execute("UPDATE resources SET count = count - ? WHERE user_id = ? AND key = ?", (count, user_id, resource_key))
             return True
         return False
