@@ -54,13 +54,13 @@ async def _craft_menu_text_and_kb(user_id, selected_nectar=None):
 
     return text, InlineKeyboardMarkup(inline_keyboard=buttons)
 
-@router.message(Nav.mutations_root, F.text == "🍯 Нектары")
-async def open_craft_root(message: Message, state: FSMContext):
+@router.message(F.text.in_({"🍯 Нектары", "🍯 Нектар"}))
+async def show_craft(message: Message, state: FSMContext):
     await state.set_state(Nav.craft_menu)
     text, ikb = await _craft_menu_text_and_kb(message.from_user.id)
     await message.answer("Спускаемся в лабораторию зелий...", reply_markup=kb([BACK]))
     await message.answer(text, reply_markup=ikb)
-
+    
 @router.callback_query(F.data.startswith("select_nectar_"))
 async def select_nectar(call: CallbackQuery):
     nectar_key = call.data.replace("select_nectar_", "")
