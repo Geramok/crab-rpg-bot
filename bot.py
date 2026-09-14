@@ -97,7 +97,7 @@ async def _safe_delete_webhook(bot):
 
 async def main():
     init_db()
-    auto_update_db_nectars()
+    await database.auto_update_db_nectars()
     
     health_runner = await start_health_server()
     storage = await create_fsm_storage()
