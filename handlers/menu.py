@@ -73,7 +73,7 @@ async def open_inventory(message: Message, state: FSMContext):
 async def open_craft(message: Message, state: FSMContext):
     from handlers.craft import show_craft
     await state.set_state(Nav.craft)
-    await show_craft(message)
+    await show_craft(message, state)
 
 
 @router.message(Nav.menu_root, F.text == "🔧 Прочее")
