@@ -8,8 +8,9 @@ from aiogram.fsm.context import FSMContext
 import database
 from data import MUTATION_SLOT_NAMES, STAT_LABELS, MUTATION_VARIANTS, STONE_COLORS
 from game_logic import (
-    molt_required_level, dna_points_for_molt, cost_new_mutation, cost_upgrade_mutation,
-    roll_mutation_variant, get_mutation_variant, apply_permanent_boost, format_number, roll_chest_loot
+    can_molt, calculate_dna_reward, get_mutation_cost, cost_upgrade_mutation,
+    roll_mutation_variant, get_mutation_variant, apply_permanent_boost, format_number, roll_chest_loot,
+    MOLT_UNLOCK_LEVEL
 )
 from keyboards import mutations_root_kb, kb, BACK
 from states import Nav
@@ -18,30 +19,29 @@ router = Router()
 
 def _molt_confirm_kb():
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Да, сбросить уровень", callback_data="molt_confirm"),
+        InlineKeyboardButton(text="✅ Да, сбросить панцирь", callback_data="molt_confirm"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="molt_cancel"),
     ]])
 
 @router.message(Nav.mutations_root, F.text == "🧬 Линька")
 async def molt_request(message: Message, state: FSMContext):
     user = await database.run_async(database.get_user, message.from_user.id)
-    required = molt_required_level(user["molts"])
-    if user["crab_level"] < required:
+    
+    if not can_molt(user["crab_level"]):
         await message.answer(
-            f"Линька доступна с {required} уровня краба (это твоя {user['molts'] + 1}-я линька — "
-            f"с каждой следующей линькой требуемый уровень растёт).\n"
+            f"Линька доступна строго с {MOLT_UNLOCK_LEVEL} уровня краба.\n"
             f"Твой текущий уровень: {user['crab_level']}.",
             reply_markup=mutations_root_kb(),
         )
         return
 
-    gain = apply_permanent_boost(dna_points_for_molt(user["molts"], user["crab_level"]), user)
-    over = user["crab_level"] - required
-    bonus_txt = f" (в т.ч. +{round(over * 0.4)} за {over} уровней сверх минимума)" if over > 0 else ""
+    base_gain = calculate_dna_reward(user["crab_level"])
+    gain = apply_permanent_boost(base_gain, user)
+    
     await message.answer(
-        f"⚠️ Линька сбросит твой уровень краба ({user['crab_level']} → 1) и всё золото ({format_number(user['gold'])} 💰).\n"
-        f"Взамен ты получишь <b>{format_number(gain)}</b> очков ДНК 🧬{bonus_txt} "
-        f"(мутации и уже накопленные очки сохранятся).\n\n"
+        f"⚠️ Линька сбросит твой уровень краба ({user['crab_level']} → 1), текущую глубину и всё золото ({format_number(user['gold'])} 💰).\n"
+        f"Взамен ты получишь <b>{format_number(gain)}</b> очков ДНК 🧬\n"
+        f"(мутации и твой исторический рекорд глубины сохранятся).\n\n"
         f"Провести линьку?",
         reply_markup=_molt_confirm_kb(),
     )
@@ -49,12 +49,13 @@ async def molt_request(message: Message, state: FSMContext):
 @router.callback_query(F.data == "molt_confirm")
 async def molt_confirm(call: CallbackQuery, state: FSMContext):
     user = await database.run_async(database.get_user, call.from_user.id)
-    required = molt_required_level(user["molts"])
-    if user["crab_level"] < required:
+    
+    if not can_molt(user["crab_level"]):
         await call.answer("Условие для линьки больше не выполняется.", show_alert=True)
         return
 
-    gain = apply_permanent_boost(dna_points_for_molt(user["molts"], user["crab_level"]), user)
+    base_gain = calculate_dna_reward(user["crab_level"])
+    gain = apply_permanent_boost(base_gain, user)
     
     await database.run_async(
         database.update_user,
@@ -66,10 +67,11 @@ async def molt_confirm(call: CallbackQuery, state: FSMContext):
         total_dna_earned=user["total_dna_earned"] + gain,
         cur_meters=1,
     )
-    next_required = molt_required_level(user["molts"] + 1)
+    
     await call.message.edit_text(
-        f"🧬 Линька прошла успешно! Получено {format_number(gain)} очков ДНК.\n"
-        f"Всего линек: {user['molts'] + 1}. Следующая линька потребует {next_required} уровня."
+        f"🧬 Линька прошла успешно! Твой старый панцирь сброшен.\n"
+        f"Получено <b>{format_number(gain)}</b> очков ДНК.\n"
+        f"Всего линек пройдено: {user['molts'] + 1}."
     )
     await call.answer()
 
@@ -87,13 +89,12 @@ async def molt_cancel(call: CallbackQuery, state: FSMContext):
 
 async def _shop_menu(user_id):
     user = await database.run_async(database.get_user, user_id)
-    owned = await database.run_async(database.get_mutations_v2, user_id)
-    new_cost = cost_new_mutation(len(owned))
+    purchased_count = user.get("purchased_mutations", 0)
+    new_cost = get_mutation_cost(purchased_count)
     
     text = (
         f"🧪 <b>Лаборатория Мутаций</b>\n\n"
         f"Очки ДНК: <b>{format_number(user['dna_points'])} 🧬</b>\n\n"
-        f"# ЗДЕСЬ НАПИШИ СВОЮ ИНФОРМАЦИЮ О МУТАЦИЯХ #\n"
         f"<i>Мутации навсегда меняют геном твоего краба. Выбивай новые варианты "
         f"в лаборатории и комбинируй их в инвентаре под свой стиль игры!</i>"
     )
@@ -130,7 +131,9 @@ async def buy_new_mut(call: CallbackQuery):
         await call.answer("У тебя уже есть все возможные мутации из лаборатории!", show_alert=True)
         return
 
-    cost = cost_new_mutation(len(owned))
+    purchased_count = user.get("purchased_mutations", 0)
+    cost = get_mutation_cost(purchased_count)
+    
     if user["dna_points"] < cost:
         await call.answer(f"Не хватает ДНК! Нужно {format_number(cost)} 🧬", show_alert=True)
         return
@@ -138,7 +141,10 @@ async def buy_new_mut(call: CallbackQuery):
     spent = await database.run_async(database.try_spend, call.from_user.id, "dna_points", cost)
     if spent:
         new_mut = random.choice(all_possible)
+        # Сохраняем новую мутацию и увеличиваем счетчик покупок
         await database.run_async(database.add_new_mutation, call.from_user.id, new_mut["key"], new_mut["slot"])
+        await database.run_async(database.update_user, call.from_user.id, purchased_mutations=purchased_count + 1)
+        
         await call.answer(f"🎉 ГЕНЕТИЧЕСКИЙ ПРОРЫВ!\nВыбита новая мутация:\n{new_mut['name']}!", show_alert=True)
         
         text, ikb = await _shop_menu(call.from_user.id)
@@ -200,17 +206,23 @@ async def _show_mutation_detail(call: CallbackQuery, variant_key: str):
     m = await database.run_async(database.get_mutation_by_key, call.from_user.id, variant_key)
     variant = get_mutation_variant(m["slot"], variant_key)
     
-    buff = variant["buff_per_level"] * m["level"]
-    debuff = variant["debuff_per_level"] * m["level"]
+    # Считаем проценты: база + (прирост * уровень)
+    buff_pct = variant.get("base_buff", 0) + (variant.get("buff_per_level", 0) * m["level"])
+    debuff_pct = variant.get("base_debuff", 0) + (variant.get("debuff_per_level", 0) * m["level"])
     upg_cost = cost_upgrade_mutation(m["level"])
     
     text = (
         f"<b>{variant['name']}</b> (Ур. {m['level']})\n"
         f"Слот: {MUTATION_SLOT_NAMES[m['slot']]}\n\n"
-        f"📈 <b>Эффекты:</b>\n"
-        f"• +{buff:.1f} к {STAT_LABELS[variant['buff_stat']]}\n"
-        f"• -{debuff:.1f} к {STAT_LABELS[variant['debuff_stat']]}\n\n"
+        f"📈 <b>Эффекты (множители):</b>\n"
     )
+    
+    if buff_pct > 0:
+        text += f"• +{buff_pct:.1f}% к {STAT_LABELS.get(variant.get('buff_stat'), 'стату')}\n"
+    if debuff_pct > 0:
+        text += f"• -{debuff_pct:.1f}% к {STAT_LABELS.get(variant.get('debuff_stat'), 'стату')}\n"
+    
+    text += "\n"
     
     if variant.get("desc"):
         text += f"✨ <b>Пассивная способность:</b>\n{variant['desc']}\n\n"
@@ -280,11 +292,9 @@ async def action_upgrade(call: CallbackQuery):
 @router.callback_query(F.data.startswith("open_chest_"))
 async def open_event_chest(call: CallbackQuery):
     chest_type_raw = call.data.replace("open_chest_", "")
-    # Превращаем '1' в число 1, но оставляем 'default' строкой
     chest_type = int(chest_type_raw) if chest_type_raw.isdigit() else chest_type_raw
     user_id = call.from_user.id
     
-    # 1. Проверяем наличие сундука и списываем 1 шт.
     has_chest = await database.run_async(database.try_spend_chest, user_id, chest_type, 1)
     if not has_chest:
         await call.answer("У тебя нет этого сундука или он уже открыт!", show_alert=True)
@@ -294,14 +304,11 @@ async def open_event_chest(call: CallbackQuery):
             pass
         return
         
-    # 2. Получаем мутации игрока, чтобы не выдать дубликат
     owned_mutations = await database.run_async(database.get_mutations_v2, user_id)
     owned_keys = [m["variant_key"] for m in owned_mutations]
     
-    # 3. Генерируем лут
     loot = await database.run_async(roll_chest_loot, chest_type, owned_keys)
     
-    # 4. Выдаем награды в базу данных
     user = await database.run_async(database.get_user, user_id)
     if loot["shells"] > 0:
         await database.run_async(database.update_user, user_id, nautilus_shells=user["nautilus_shells"] + loot["shells"])
@@ -315,13 +322,14 @@ async def open_event_chest(call: CallbackQuery):
     if loot["mutation"]:
         mut = loot["mutation"]
         await database.run_async(database.add_new_mutation, user_id, mut["key"], mut["slot"])
+        # Заметь: мутация из сундука НЕ увеличивает purchased_mutations
+        
         mut_text = (
             f"\n\n🎉 <b>ГЕНЕТИЧЕСКИЙ ПРОРЫВ!</b>\n"
             f"Тебе выпала легендарная мутация: <b>{mut['name']}</b>!\n"
             f"Загляни в Лабораторию, чтобы надеть её."
         )
         
-    # 5. Собираем и выводим итоговое сообщение
     shells_text = f"🐚 Ракушки наутилуса: {loot['shells']} шт.\n" if loot["shells"] > 0 else ""
     stones_str = "\n".join([f"💎 {st}" for st in stone_texts]) if stone_texts else "Ничего примечательного."
     
@@ -332,6 +340,5 @@ async def open_event_chest(call: CallbackQuery):
         f"{mut_text}"
     )
     
-    # Убираем кнопку и показываем результат
     await call.message.edit_text(final_text)
     await call.answer()
