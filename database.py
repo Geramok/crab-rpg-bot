@@ -520,10 +520,11 @@ def try_spend_resource(user_id, resource_key, count):
     """Проверяет наличие ресурса и списывает его."""
     import sqlite3
     with sqlite3.connect(DB_NAME) as db:
-        cursor = db.execute("SELECT count FROM resources WHERE user_id = ? AND resource_key = ?", (user_id, resource_key))
+        # Мы изменили resource_key на key внутри запроса к базе данных
+        cursor = db.execute("SELECT count FROM resources WHERE user_id = ? AND key = ?", (user_id, resource_key))
         row = cursor.fetchone()
         if row and row[0] >= count:
-            db.execute("UPDATE resources SET count = count - ? WHERE user_id = ? AND resource_key = ?", (count, user_id, resource_key))
+            db.execute("UPDATE resources SET count = count - ? WHERE user_id = ? AND key = ?", (count, user_id, resource_key))
             db.commit()
             return True
         return False
