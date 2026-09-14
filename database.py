@@ -504,28 +504,26 @@ async def update_nectars_data(user_id, active_nectar=None, nectars_inv=None, str
             await db.execute(f"UPDATE users SET {', '.join(updates)} WHERE user_id = ?", params)
             await db.commit()
 
-async def try_spend_stone(user_id, color, level, count):
-    """Списывает камни для крафта нектаров. Возвращает True, если успешно."""
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT count FROM stones WHERE user_id = ? AND color = ? AND level = ?", (user_id, color, level))
-        row = await cursor.fetchone()
+def try_spend_stone(user_id, color, level, count):
+    """Списывает камни для крафта нектаров."""
+    import sqlite3
+    with sqlite3.connect(DB_NAME) as db:
+        cursor = db.execute("SELECT count FROM stones WHERE user_id = ? AND color = ? AND level = ?", (user_id, color, level))
+        row = cursor.fetchone()
         if row and row[0] >= count:
-            await db.execute("UPDATE stones SET count = count - ? WHERE user_id = ? AND color = ? AND level = ?", (count, user_id, color, level))
-            await db.commit()
+            db.execute("UPDATE stones SET count = count - ? WHERE user_id = ? AND color = ? AND level = ?", (count, user_id, color, level))
+            db.commit()
             return True
         return False
 
-async def try_spend_resource(user_id, resource_key, count):
-    """Проверяет наличие нужного количества ресурса и списывает его."""
-    async with aiosqlite.connect(DB_NAME) as db:
-        # Ищем ресурс в инвентаре пользователя
-        cursor = await db.execute("SELECT count FROM resources WHERE user_id = ? AND resource_key = ?", (user_id, resource_key))
-        row = await cursor.fetchone()
-        
-        # Если ресурс есть и его количество больше или равно требуемому
+def try_spend_resource(user_id, resource_key, count):
+    """Проверяет наличие ресурса и списывает его."""
+    import sqlite3
+    with sqlite3.connect(DB_NAME) as db:
+        cursor = db.execute("SELECT count FROM resources WHERE user_id = ? AND resource_key = ?", (user_id, resource_key))
+        row = cursor.fetchone()
         if row and row[0] >= count:
-            await db.execute("UPDATE resources SET count = count - ? WHERE user_id = ? AND resource_key = ?", (count, user_id, resource_key))
-            await db.commit()
+            db.execute("UPDATE resources SET count = count - ? WHERE user_id = ? AND resource_key = ?", (count, user_id, resource_key))
+            db.commit()
             return True
-            
         return False
