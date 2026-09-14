@@ -22,6 +22,7 @@ class Nav(StatesGroup):
     shop = State()
     waiting_nickname = State()
     waiting_search = State()
+    craft_menu = State()
 
 # Куда возвращает кнопка "Назад" из каждого состояния
 PARENT_STATE = {
