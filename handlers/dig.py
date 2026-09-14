@@ -81,7 +81,7 @@ async def collect_dig(call: CallbackQuery):
     except TelegramBadRequest:
         pass
 
-    user = await database.run_async(database.get_user, call.fromuser.id)
+    user = await database.run_async(database.get_user, call.from_user.id)
     start_ts = user["dig_start_ts"]
     duration = user["dig_duration_seconds"] or 3600
     now = int(time.time())
