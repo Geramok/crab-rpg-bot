@@ -28,7 +28,8 @@ def hunt_kb(in_hunt: bool):
 
 
 def mutations_root_kb():
-    return kb(["🧬 Линька"], ["🧪 Мутации"], [BACK])
+    # Добавили кнопку "🍯 Нектары" в корневое меню мутаций/лаборатории
+    return kb(["🧬 Линька"], ["🧪 Мутации", "🍯 Нектары"], [BACK])
 
 
 def menu_root_kb():
