@@ -374,3 +374,7 @@ HELP_PAGES = [
 PROMO_CODES = {
     "стример2026": {"gold": 1000, "dna": 50, "shells": 5}
 }
+
+# Настройки времени для мифических ивентов
+MYTHIC_EVENT_DURATION_HOURS = 24
+MYTHIC_EVENT_CHECK_INTERVAL_SECONDS = 3600
