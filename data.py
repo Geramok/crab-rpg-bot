@@ -220,28 +220,28 @@ MUTATION_SLOT_BASE_COST = {"legs": 5, "shell": 5, "claws": 6}
 
 MUTATION_VARIANTS = {
     "legs": [
-        {"key": "stone_leg", "name": "🪨 Каменная нога", "buff_stat": "max_hp", "buff_per_level": 14, "debuff_stat": "evasion", "debuff_per_level": 2},
-        {"key": "mercury_leg", "name": "🔘 Ртутная нога", "buff_stat": "evasion", "buff_per_level": 3, "debuff_stat": "damage", "debuff_per_level": 1},
-        {"key": "coral_leg", "name": "🪸 Коралловая нога", "buff_stat": "luck", "buff_per_level": 3, "debuff_stat": "max_hp", "debuff_per_level": 5},
+        {"key": "stone_leg", "name": "🪨 Каменная нога", "buff_stat": "max_hp", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "evasion", "base_debuff": 2.0, "debuff_per_level": 0.2},
+        {"key": "mercury_leg", "name": "🔘 Ртутная нога", "buff_stat": "evasion", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "damage", "base_debuff": 2.0, "debuff_per_level": 0.2},
+        {"key": "coral_leg", "name": "🪸 Коралловая нога", "buff_stat": "luck", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "max_hp", "base_debuff": 2.0, "debuff_per_level": 0.2},
         # Легендарные мутации:
-        {"key": "puncture_legs", "name": "🗡️ Острые костеходы", "buff_stat": "crit_chance", "buff_per_level": 2.5, "debuff_stat": "max_hp", "debuff_per_level": 3, "special_effect": "puncture", "desc": "15% шанс на гарантированный крит независимо от крит. шанса.", "is_special": True},
-        {"key": "frenzy_legs", "name": "🌀 Бешеные ходоки ", "buff_stat": "damage", "buff_per_level": 2.5, "debuff_stat": "evasion", "debuff_per_level": 3, "special_effect": "frenzy", "desc": "После крита шанс 30% мгновенно нанести ещё один удар.", "is_special": True},
+        {"key": "puncture_legs", "name": "🗡️ Острые костеходы", "buff_stat": "crit_chance", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "max_hp", "base_debuff": 15.0, "debuff_per_level": 1.0, "special_effect": "puncture", "desc": "10% шанс на гарантированный крит независимо от шанса. Сильно снижает базовую прочность.", "is_special": True},
+        {"key": "frenzy_legs", "name": "🌀 Бешеные ходоки", "buff_stat": "damage", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "evasion", "base_debuff": 15.0, "debuff_per_level": 1.0, "special_effect": "frenzy", "desc": "После крита шанс 20% нанести ещё один удар. Краб становится неповоротливым (-уклонение).", "is_special": True},
     ],
     "claws": [
-        {"key": "golden_claw", "name": "🪝️ Золотая клешня", "buff_stat": "luck", "buff_per_level": 3.5, "debuff_stat": "damage", "debuff_per_level": 1},
-        {"key": "steel_claw", "name": "⚙️ Стальная клешня", "buff_stat": "damage", "buff_per_level": 2.2, "debuff_stat": "evasion", "debuff_per_level": 2},
-        {"key": "venom_claw", "name": "🌵️ Шипованная клешня", "buff_stat": "crit_chance", "buff_per_level": 2.5, "debuff_stat": "max_hp", "debuff_per_level": 5},
+        {"key": "golden_claw", "name": "🪝️ Золотая клешня", "buff_stat": "luck", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "damage", "base_debuff": 2.0, "debuff_per_level": 0.2},
+        {"key": "steel_claw", "name": "⚙️ Стальная клешня", "buff_stat": "damage", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "evasion", "base_debuff": 2.0, "debuff_per_level": 0.2},
+        {"key": "venom_claw", "name": "🌵️ Шипованная клешня", "buff_stat": "crit_chance", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "max_hp", "base_debuff": 2.0, "debuff_per_level": 0.2},
         # Легендарные мутации:
-        {"key": "poison_claws", "name": "🧪 Ядовитая клешня-хлыст", "buff_stat": "crit_damage", "buff_per_level": 5, "debuff_stat": "luck", "debuff_per_level": 2, "special_effect": "poison", "desc": "25% шанс отравить врага: 3 хода подряд дополнительный урон.", "is_special": True},
-        {"key": "vampire_claws", "name": "🛸️ Инопланетная клешня кровопийцы", "buff_stat": "damage", "buff_per_level": 3, "debuff_stat": "max_hp", "debuff_per_level": 6, "special_effect": "vampirism", "desc": "25% нанесённого урона превращается в восстановленную прочность.", "is_special": True},
+        {"key": "poison_claws", "name": "🧪 Ядовитая клешня-хлыст", "buff_stat": "crit_damage", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "luck", "base_debuff": 15.0, "debuff_per_level": 1.0, "special_effect": "poison", "desc": "15% шанс отравить врага. Удача покидает тебя.", "is_special": True},
+        {"key": "vampire_claws", "name": "🛸️ Инопланетная клешня кровопийцы", "buff_stat": "damage", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "max_hp", "base_debuff": 20.0, "debuff_per_level": 1.5, "special_effect": "vampirism", "desc": "Лечит на 25% от урона (макс. 10% ХП за удар). Критически снижает базовую прочность.", "is_special": True},
     ],
     "shell": [
-        {"key": "obsidian_shell", "name": "🌋 Обсидиановый панцирь", "buff_stat": "max_hp", "buff_per_level": 16, "debuff_stat": "luck", "debuff_per_level": 1.5},
-        {"key": "pearl_shell", "name": "🦪 Жемчужный панцирь", "buff_stat": "crit_damage", "buff_per_level": 4, "debuff_stat": "evasion", "debuff_per_level": 2},
-        {"key": "sponge_shell", "name": "🧽 Губчатый панцирь", "buff_stat": "evasion", "buff_per_level": 3, "debuff_stat": "damage", "debuff_per_level": 1},
+        {"key": "obsidian_shell", "name": "🌋 Обсидиановый панцирь", "buff_stat": "max_hp", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "luck", "base_debuff": 2.0, "debuff_per_level": 0.2},
+        {"key": "pearl_shell", "name": "🦪 Жемчужный панцирь", "buff_stat": "crit_damage", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "evasion", "base_debuff": 2.0, "debuff_per_level": 0.2},
+        {"key": "sponge_shell", "name": "🧽 Губчатый панцирь", "buff_stat": "evasion", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "damage", "base_debuff": 2.0, "debuff_per_level": 0.2},
         # Легендарные мутации:
-        {"key": "camo_shell", "name": "🌊 Мимикрирующий панцирь", "buff_stat": "evasion", "buff_per_level": 4, "debuff_stat": "damage", "debuff_per_level": 2, "special_effect": "camouflage", "desc": "20% шанс полностью избежать ответного удара врага.", "is_special": True},
-        {"key": "greed_shell", "name": "🏆️ Блестящий золотом панцирь", "buff_stat": "luck", "buff_per_level": 4, "debuff_stat": "max_hp", "debuff_per_level": 5, "special_effect": "greed", "desc": "20% шанс удвоить золото за победу над врагом.", "is_special": True},
+        {"key": "camo_shell", "name": "🌊 Мимикрирующий панцирь", "buff_stat": "evasion", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "damage", "base_debuff": 15.0, "debuff_per_level": 1.0, "special_effect": "camouflage", "desc": "10% шанс избежать удара. Атаки краба становятся очень слабыми.", "is_special": True},
+        {"key": "greed_shell", "name": "🏆️ Блестящий золотом панцирь", "buff_stat": "luck", "base_buff": 5.0, "buff_per_level": 0.5, "debuff_stat": "max_hp", "base_debuff": 15.0, "debuff_per_level": 1.0, "special_effect": "greed", "desc": "15% шанс удвоить золото за врага. Панцирь становится очень хрупким.", "is_special": True},
     ],
 }
 
@@ -343,114 +343,4 @@ SHOP_ITEMS = {
         "title": "🌟 Вечный прилив",
         "description": "Разовая покупка — НАВСЕГДА +15% к золоту и очкам ДНК со всех источников.",
         "stars": 400,
-        "reward_type": "permanent_boost",
-    },
-}
-PERMANENT_BOOST_MULT = 1.15
-
-# ---------- МИФИЧЕСКИЕ ИВЕНТЫ ----------
-MYTHIC_EVENT_UNLOCK_MOLTS = 2
-MYTHIC_EVENT_UNLOCK_MAX_METERS = 300
-MYTHIC_EVENT_UNLOCK_KILLS = 450
-
-MYTHIC_EVENTS = [
-    {"name": "🐙 Тенеморф Бездны",
-     "description": "Из самой глубокой впадины поднялась тварь без формы — она меняет очертания и питается страхом всего, что движется по дну.",
-     "art": "  (o   o)\n ((     ))\n  \\/ | \\/ ",
-     "hp_flavor": "🫀 Тёмная материя клубится, поглощая твои удары..."},
-    {"name": "👑 Королева Медуз Абиссаль",
-     "description": "Древняя королева медуз пробудилась и парализует всё живое своим ядовитым туманом.",
-     "art": "  .===.\n ( o o )\n  )|||( ",
-     "hp_flavor": "🪼 Желейное сердце мерно пульсирует, не замечая ран..."},
-    {"name": "💀 Костяной Повелитель Рифов",
-     "description": "Скелет исполинского морского ящера восстал из кораллового кладбища, чтобы вновь править рифами.",
-     "art": " (x_x)\n /|_|\\\n  ' ' ",
-     "hp_flavor": "🦴 Древние кости лишь слегка осыпаются от ударов..."},
-    {"name": "🌊 Страж Пучины",
-     "description": "Каменный страж охраняет вход в бездну уже тысячи лет. Раз в сезон он пробуждается, чтобы испытать достойных.",
-     "art": "  .=====.\n ( O   O )\n  '=====' ",
-     "hp_flavor": "🪨 От каменной брони отлетают жалкие искры..."},
-    {"name": "🔱 Штормовой Левиафан",
-     "description": "Левиафан вызывает подводные бури, крушащие всё на своём пути.",
-     "art": " *~*~*~*\n( O   O )\n *~*~*~* ",
-     "hp_flavor": "🌪️ Штормовая чешуя поглощает весь твой урон..."},
-    {"name": "🦑 Пожиратель Кораллов",
-     "description": "Гигантский спрут-альбинос пожирает целые рифы, оставляя за собой мёртвую пустошь.",
-     "art": "  (@   @)\n //|||||\\\\\n  |     | ",
-     "hp_flavor": "🤍 Бледная плоть мгновенно заращивает раны..."},
-]
-MYTHIC_EVENT_DURATION_HOURS = 16
-MYTHIC_EVENT_CHECK_INTERVAL_SECONDS = 30 * 60
-
-# ---------- ИСТОРИЯ / ТЕКСТЫ ----------
-INTRO_TEXT = (
-    "🌊 <b>Глубины зовут тебя...</b>\n\n"
-    "Когда-то океан был спокоен. Но древние повелители морских глубин пробудились "
-    "и несут разрушение всему живому на дне.\n\n"
-    "Ты — маленький краб, но в твоём панцире дремлет сила, способная сокрушить "
-    "самих морских владык. Собирай золото, побеждай тварей дна, находи драгоценности "
-    "и проходи <b>линьку</b>, чтобы становиться сильнее с каждым разом.\n\n"
-    "🦀 <b>Приказ один: стать сильнее и одолеть повелителей океана!</b>"
-)
-
-HELP_PAGES = [
-    (
-        "📖 Как играть (1/5) — Основы",
-        "🔎 <b>Рыскать по дну</b> — иди по дну моря, побеждай существ и получай золото.\n"
-        "💰 Золото трать на повышение <b>уровня краба</b> в разделе «Характеристики».\n"
-        "🧬 На высоком уровне сделай <b>линьку</b> в «Мутациях»: уровень и золото "
-        "сбрасываются, но ты получаешь очки ДНК. Каждая следующая линька требует "
-        "более высокого уровня, а превышение минимума даёт больше ДНК.\n"
-        "⛏️ <b>Копать</b> — выбери время копания в меню, получай камни."
-    ),
-    (
-        "📖 Как играть (2/5) — Характеристики",
-        "⚔️ <b>Урон</b> — сколько ты наносишь одним ударом.\n"
-        "🌊 <b>Уклонение</b> — шанс, что удар врага не заденет тебя.\n"
-        "🍀 <b>Удача</b> — на сколько процентов больше золота ты получаешь.\n"
-        "🎯 <b>Крит. шанс</b> — вероятность критического удара.\n"
-        "💥 <b>Крит. урон</b> — во сколько раз сильнее бьёт крит.\n"
-        "❤️ <b>Прочность</b> — твой запас HP. НЕ восстанавливается полностью "
-        "между боями — лечись временем вне охоты или мутацией-регеном."
-    ),
-    (
-        "📖 Как играть (3/5) — Боевые способности",
-        "Кроме обычной ✂️ Клешнёй!, в бою доступны активные способности:\n"
-        "🛡️ <b>Панцирь</b> — блокирует 80% входящего урона в этом ходу (откат 3 хода).\n"
-        "🪝️ <b>Проклятье</b> — двойное золото за проклятого врага, но 2 следующих "
-        "твоих удара гарантированно промахнутся. Раз за бой.\n"
-        "✨ У каждого краба есть своя уникальная третья способность (раз за бой) — "
-        "загляни в «Мощь», там описана именно твоя."
-    ),
-    (
-        "📖 Как играть (4/5) — Мутации и крафт",
-        "🧪 Мутации (ноги/панцирь/клешни) — артефакты со случайным плюсом и "
-        "минусом к характеристикам, покупаются и прокачиваются за ДНК одной кнопкой "
-        "(какая именно часть тела улучшится — решает случай).\n"
-        "🌟 Из сундуков с боссов можно выбить Легендарные мутации — они надеваются "
-        "в обычные слоты, но дают уникальные пассивные навыки в бою!\n"
-        "🍯 Крафт — собирай ресурсы с монстров и копания, соединяй в «Нектар "
-        "силы» — временный буст урона."
-    ),
-    (
-        "📖 Как играть (5/5) — Опасности и ивенты",
-        "💀 Если прочность падает до 0 — тебя отбрасывает назад по дистанции, "
-        "а не скидывает полностью на берег.\n"
-        "↩️ «Бочком назад» сохраняет твою позицию и текущую прочность, но не даёт "
-        "награды — используй, если чувствуешь, что не победишь.\n"
-        "🛡️ Каждые 10 метров — засада из сильного монстра: победи мини босса "
-        "глубины.\n"
-        "🐉 Мифические ивенты: битва идёт до потери панциря. Нанесённый урон идёт в рейтинг, но после смерти краб восстанавливается 3.5 часа!"
-    ),
-]
-
-PROMO_CODES = {
-    "WELCOME2026": {
-        "gold": 300, "dna_points": 5,
-        "text": "🎁 Промокод активирован! Подарок за переход по ссылке.",
-    },
-    "STREAMER2026": {
-        "gold": 1000, "nautilus_shells": 10, "permanent_boost": True,
-        "text": "🌟 Особый подарок от стримера!",
-    },
-}
+        "reward
