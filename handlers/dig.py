@@ -4,6 +4,7 @@ from collections import Counter
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.exceptions import TelegramBadRequest
 
 import database
 from data import STONE_COLORS, RESOURCES, DIG_DURATION_OPTIONS_HOURS
@@ -50,29 +51,54 @@ async def show_dig(message: Message):
 async def start_dig(call: CallbackQuery):
     hours = int(call.data.split("_")[-1])
     if hours not in DIG_DURATION_OPTIONS_HOURS:
-        await call.answer()
+        try:
+            await call.answer()
+        except TelegramBadRequest:
+            pass
         return
+        
     started = await database.run_async(database.try_start_dig, call.from_user.id, hours * 3600)
     if not started:
-        await call.answer("Копание уже идёт.", show_alert=True)
+        try:
+            await call.answer("Копание уже идёт.", show_alert=True)
+        except TelegramBadRequest:
+            pass
         return
-    await call.answer(f"Краб начал копать на {hours} ч.!")
+        
+    try:
+        await call.answer(f"Краб начал копать на {hours} ч.!")
+    except TelegramBadRequest:
+        pass
+        
     await call.message.edit_text(f"⛏️ Краб копает дно {hours} ч.... Загляни попозже.")
 
 
 @router.callback_query(F.data == "collect_dig")
 async def collect_dig(call: CallbackQuery):
-    user = await database.run_async(database.get_user, call.from_user.id)
+    # Мгновенно отвечаем серверу Telegram, чтобы избежать ошибки таймаута
+    try:
+        await call.answer("Собираем добычу...")
+    except TelegramBadRequest:
+        pass
+
+    user = await database.run_async(database.get_user, call.fromuser.id)
     start_ts = user["dig_start_ts"]
     duration = user["dig_duration_seconds"] or 3600
     now = int(time.time())
+    
     if not start_ts or now - start_ts < duration:
-        await call.answer("Копание ещё не завершено.", show_alert=True)
+        try:
+            await call.answer("Копание ещё не завершено.", show_alert=True)
+        except TelegramBadRequest:
+            pass
         return
 
     collected = await database.run_async(database.try_collect_dig, call.from_user.id, start_ts)
     if not collected:
-        await call.answer("Уже забрано!", show_alert=True)
+        try:
+            await call.answer("Уже забрано!", show_alert=True)
+        except TelegramBadRequest:
+            pass
         return
 
     hours = duration / 3600
@@ -94,5 +120,4 @@ async def collect_dig(call: CallbackQuery):
         for key, cnt in rc.items():
             lines.append(f"{RESOURCES[key]['name']} × {cnt}")
 
-    await call.answer("Добыча получена!")
     await call.message.edit_text("\n".join(lines))
