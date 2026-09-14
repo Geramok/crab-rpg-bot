@@ -514,3 +514,18 @@ async def try_spend_stone(user_id, color, level, count):
             await db.commit()
             return True
         return False
+
+async def try_spend_resource(user_id, resource_key, count):
+    """Проверяет наличие нужного количества ресурса и списывает его."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Ищем ресурс в инвентаре пользователя
+        cursor = await db.execute("SELECT count FROM resources WHERE user_id = ? AND resource_key = ?", (user_id, resource_key))
+        row = await cursor.fetchone()
+        
+        # Если ресурс есть и его количество больше или равно требуемому
+        if row and row[0] >= count:
+            await db.execute("UPDATE resources SET count = count - ? WHERE user_id = ? AND resource_key = ?", (count, user_id, resource_key))
+            await db.commit()
+            return True
+            
+        return False
