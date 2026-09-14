@@ -104,7 +104,7 @@ async def show_events(message: Message, state: FSMContext):
             text += f"{i}. {name} — {format_number(row['damage'])} урона\n"
     else:
         text += "пока никто не атаковал\n"
-        
+
     text += (
         "\n💡 Награды зависят от нанесенного урона! Топ-3 получают самые редкие сундуки "
         "(Жемчужный, Золотой, Роскошный), а остальные участники — Стандартный сундук. "
@@ -155,29 +155,31 @@ async def boss_attack(call: CallbackQuery, state: FSMContext):
         "hp_flavor": boss_template.get("hp_flavor", "Бессмертное существо..."),
         "accumulated_damage": 0
     }
-    
+
     # Полностью лечим краба перед битвой и собираем все статы
     from game_logic import get_effective_stats, get_equipped_special_effects
     stones = await database.run_async(database.get_stones, call.from_user.id)
     mutations = await database.run_async(database.get_mutations_v2, call.from_user.id)
     stats = get_effective_stats(user, stones, mutations)
     full_hp = stats["max_hp"]
-    
+
     await call.answer("Битва началась!")
-    
+
     # Переводим в состояние охоты и отрисовываем экран
     await state.set_state(Nav.hunt)
-    
+
     from handlers.hunt import _render_single, _push_battle_update, _get_abilities
     from keyboards import hunt_kb
-        # Передаем "пустышку" нектаров, чтобы интерфейс босса остался классическим (только 1 кнопка)
+    
+    # Передаем "пустышку" нектаров, чтобы интерфейс босса остался классическим (только 1 кнопка)
     empty_nectars = {"active_nectar": None, "nectars_inv": {}, "strength_charges": 0, "combat_effects": {}}
+    
     # Передаем cur_meters (число) вместо boss_data (строки)
-text, ikb = _render_single(full_hp, stats["max_hp"], user.get("cur_meters", 0), user["crab_type"], empty_nectars)
+    text, ikb = _render_single(full_hp, stats["max_hp"], user.get("cur_meters", 0), user["crab_type"], empty_nectars)
 
     await call.message.answer("🫧 Вглядываемся в муть...", reply_markup=hunt_kb(True))
     sent = await call.message.answer(text, reply_markup=ikb)
-    
+
     # 🌟 Записываем босса прямо в FSM-память, чтобы боевая логика hunt.py его увидела
     fsm_data = {
         "cur_hp": full_hp,
