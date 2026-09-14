@@ -37,7 +37,6 @@ async def _show_other_profile_text(target_user):
     zone = get_depth_zone_name(target_user["max_meters"])
     rank = get_molt_rank(target_user["molts"])
     
-    # Подтягиваем статы чужого профиля для отображения мощи
     stones = await database.run_async(database.get_stones, target_user["user_id"])
     mutations = await database.run_async(database.get_mutations_v2, target_user["user_id"])
     stats = get_effective_stats(target_user, stones, mutations)
@@ -64,12 +63,34 @@ async def _show_other_profile_text(target_user):
     )
     return text
 
+def _calc_max_levels(current_level, molts, gold):
+    """
+    Рассчитывает максимальное количество уровней, которое можно купить на имеющееся золото.
+    Лимит итераций: 5000, чтобы не перегружать сервер при бесконечном золоте у тестеров.
+    """
+    max_levels = 0
+    total_cost = 0
+    curr_lvl = current_level
+    
+    for _ in range(5000):
+        c = level_up_cost(curr_lvl, molts)
+        if gold >= total_cost + c:
+            total_cost += c
+            max_levels += 1
+            curr_lvl += 1
+        else:
+            break
+            
+    return max_levels, total_cost
+
 async def _characteristics_text_and_kb(user_id):
     user = await database.run_async(database.get_user, user_id)
     stones = await database.run_async(database.get_stones, user_id)
     mutations = await database.run_async(database.get_mutations_v2, user_id)
     stats = get_effective_stats(user, stones, mutations)
-    cost = level_up_cost(user["crab_level"], user["molts"])
+    
+    cost_one = level_up_cost(user["crab_level"], user["molts"])
+    max_levels, total_cost = _calc_max_levels(user["crab_level"], user["molts"], user["gold"])
 
     mutation_names = []
     for m in mutations:
@@ -93,11 +114,19 @@ async def _characteristics_text_and_kb(user_id):
         f"Мутации: {mutations_txt}\n"
         f"Способности: {abilities_txt}\n"
         f"Твоя уникальная: {unique['name']} — {unique['desc']}\n\n"
-        f"💰 {format_number(user['gold'])} · след. уровень: {format_number(cost)} 💰"
+        f"💰 Твой баланс: {format_number(user['gold'])} 💰"
     )
-    ikb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=f"⬆️ Повысить уровень ({format_number(cost)} 💰)", callback_data="level_up")
-    ]])
+    
+    # Текст для кнопки макс. прокачки
+    if max_levels > 0:
+        max_btn_text = f"⬆️ Макс: +{max_levels} ур. ({format_number(total_cost)} 💰)"
+    else:
+        max_btn_text = "⬆️ Макс. прокачка"
+        
+    ikb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"⬆️ +1 ур. ({format_number(cost_one)} 💰)", callback_data="level_up")],
+        [InlineKeyboardButton(text=max_btn_text, callback_data="level_up_max")]
+    ])
     return text, ikb
 
 async def show_characteristics(message: Message):
@@ -122,10 +151,8 @@ async def level_up(call: CallbackQuery, state: FSMContext):
         
     await call.answer("Уровень повышен! Здоровье восстановлено.")
 
-    # Обновляем уровень в БД
     await database.run_async(database.update_user, user_id, crab_level=user["crab_level"] + 1)
     
-    # Пересчитываем статы, чтобы мгновенно вылечить краба до нового максимума ХП
     user_updated = await database.run_async(database.get_user, user_id)
     stones = await database.run_async(database.get_stones, user_id)
     mutations = await database.run_async(database.get_mutations_v2, user_id)
@@ -138,7 +165,42 @@ async def level_up(call: CallbackQuery, state: FSMContext):
     )
 
     text, ikb = await _characteristics_text_and_kb(user_id)
-    await call.message.edit_text(f"✅ Уровень повышен! Панцирь полностью восстановлен.\n\n{text}", reply_markup=ikb)
+    await call.message.edit_text(f"✅ Уровень повышен на +1! Панцирь полностью восстановлен.\n\n{text}", reply_markup=ikb)
+
+@router.callback_query(F.data == "level_up_max")
+async def level_up_max(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    user = await database.run_async(database.get_user, user_id)
+    
+    max_levels, total_cost = _calc_max_levels(user["crab_level"], user["molts"], user["gold"])
+    
+    if max_levels == 0:
+        cost_one = level_up_cost(user["crab_level"], user["molts"])
+        await call.answer(f"Не хватает золота! Нужно {format_number(cost_one)} 💰 хотя бы на один уровень.", show_alert=True)
+        return
+
+    spent = await database.run_async(database.try_spend, user_id, "gold", total_cost)
+    if not spent:
+        await call.answer("Не удалось списать золото, баланс изменился. Попробуй ещё раз.", show_alert=True)
+        return
+        
+    await call.answer(f"Уровень повышен на {max_levels}! Здоровье восстановлено.")
+
+    await database.run_async(database.update_user, user_id, crab_level=user["crab_level"] + max_levels)
+    
+    user_updated = await database.run_async(database.get_user, user_id)
+    stones = await database.run_async(database.get_stones, user_id)
+    mutations = await database.run_async(database.get_mutations_v2, user_id)
+    new_stats = get_effective_stats(user_updated, stones, mutations)
+    
+    await database.run_async(
+        database.update_user, user_id, 
+        cur_hp=new_stats["max_hp"], 
+        last_hp_regen_ts=int(time.time())
+    )
+
+    text, ikb = await _characteristics_text_and_kb(user_id)
+    await call.message.edit_text(f"✅ Уровень повышен на +{max_levels}! Панцирь полностью восстановлен.\n\n{text}", reply_markup=ikb)
 
 @router.message(Nav.profile, F.text == "✏️ Сменить ник")
 async def change_nick_request(message: Message, state: FSMContext):
