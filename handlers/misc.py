@@ -191,7 +191,7 @@ async def boss_attack(call: CallbackQuery, state: FSMContext):
         "max_meters": user["max_meters"],
         "monster": boss_data,
         "abilities": _get_abilities(boss_data),
-        "battle_message_id": sent.message_id
+        "battle_message_id": sent.message_id,
         "nectars": empty_nectars
     }
     await state.update_data(**fsm_data)
