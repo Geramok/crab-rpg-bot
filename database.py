@@ -454,6 +454,10 @@ async def flush_user_buffer(redis, user_id: int):
     return True
 
 import json
+import aiosqlite
+
+# Явно указываем имя файла твоей базы данных
+DB_NAME = "preview.db"
 
 async def auto_update_db_nectars():
     """Автоматически обновляет базу данных для системы нектаров."""
@@ -465,9 +469,10 @@ async def auto_update_db_nectars():
             await db.commit()
             print("База данных: колонки нектаров успешно добавлены!")
         except Exception:
-            pass # Если колонки уже есть, скрипт пойдет дальше
+            pass # Если колонки уже есть, скрипт пойдет дальше без ошибки
 
 async def get_nectars_data(user_id):
+    """Получает данные о нектарах пользователя."""
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT active_nectar, nectars_inv, strength_charges FROM users WHERE user_id = ?", (user_id,))
@@ -481,6 +486,7 @@ async def get_nectars_data(user_id):
         return {"active_nectar": None, "nectars_inv": {}, "strength_charges": 0}
 
 async def update_nectars_data(user_id, active_nectar=None, nectars_inv=None, strength_charges=None):
+    """Обновляет данные экипировки и инвентаря нектаров."""
     async with aiosqlite.connect(DB_NAME) as db:
         updates = []
         params = []
@@ -499,7 +505,7 @@ async def update_nectars_data(user_id, active_nectar=None, nectars_inv=None, str
             await db.commit()
 
 async def try_spend_stone(user_id, color, level, count):
-    """Списывает камни для крафта нектаров."""
+    """Списывает камни для крафта нектаров. Возвращает True, если успешно."""
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT count FROM stones WHERE user_id = ? AND color = ? AND level = ?", (user_id, color, level))
         row = await cursor.fetchone()
