@@ -770,6 +770,192 @@ async def ability_unique(call: CallbackQuery, state: FSMContext):
 
     fsm_data["cur_hp"] = cur_hp
     await _finish_turn(call, user_id, fsm_data, state, is_camp, target, log)
+
+@router.callback_query(F.data == "ability_shield")
+async def ability_shield(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    ctx = await _load_battle_context(user_id, state)
+    if not ctx:
+        try:
+            await call.answer("Сейчас не с кем сражаться.", show_alert=True)
+        except TelegramBadRequest:
+            pass
+        return
+        
+    fsm_data, is_camp, target = ctx
+    abilities = fsm_data["abilities"]
+
+    if target.get("is_boss"):
+        try:
+            await call.answer("Способности бесполезны против этого существа!", show_alert=True)
+        except TelegramBadRequest:
+            pass
+        return
+    if abilities["shield_cooldown"] > 0:
+        try:
+            await call.answer(f"Щит перезаряжается ещё {abilities['shield_cooldown']} х.", show_alert=True)
+        except TelegramBadRequest:
+            pass
+        return
+        
+    try:
+        await call.answer()
+    except TelegramBadRequest:
+        pass
+
+    stats = fsm_data["stats"]
+    specials = fsm_data["specials"]
+    cur_hp = fsm_data["cur_hp"]
+    log = [f"{SHIELD_ABILITY['name']} поднят!"]
+
+    if target.get("poison_turns", 0) > 0:
+        target["hp"] -= target["poison_dmg"]
+        target["poison_turns"] -= 1
+        log.append(f"☠️ Яд: -{format_number(target['poison_dmg'])}")
+
+    _tick_ability_timers(abilities)
+    abilities["shield_cooldown"] = SHIELD_ABILITY["cooldown_turns"]
+
+    if target["hp"] > 0:
+        mdmg = _resolve_monster_counter(target, stats, specials, log, block_percent=SHIELD_ABILITY["block_percent"])
+        cur_hp -= mdmg
+
+    fsm_data["cur_hp"] = cur_hp
+    await _finish_turn(call, user_id, fsm_data, state, is_camp, target, log)
+
+@router.callback_query(F.data == "ability_mark")
+async def ability_mark(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    ctx = await _load_battle_context(user_id, state)
+    if not ctx:
+        try:
+            await call.answer("Сейчас не с кем сражаться.", show_alert=True)
+        except TelegramBadRequest:
+            pass
+        return
+        
+    fsm_data, is_camp, target = ctx
+    abilities = fsm_data["abilities"]
+
+    if target.get("is_boss"):
+        try:
+            await call.answer("Способности бесполезны против этого существа!", show_alert=True)
+        except TelegramBadRequest:
+            pass
+        return
+    if abilities["mark_used"]:
+        try:
+            await call.answer("Проклятие уже использовано в этом бою.", show_alert=True)
+        except TelegramBadRequest:
+            pass
+        return
+        
+    try:
+        await call.answer()
+    except TelegramBadRequest:
+        pass
+
+    stats = fsm_data["stats"]
+    specials = fsm_data["specials"]
+    cur_hp = fsm_data["cur_hp"]
+    log = ["🪝 Проклятие золотого краба! Следующие 2 удара промахнутся, но добивание даст ×2 золота."]
+
+    if target.get("poison_turns", 0) > 0:
+        target["hp"] -= target["poison_dmg"]
+        target["poison_turns"] -= 1
+        log.append(f"☠️ Яд: -{format_number(target['poison_dmg'])}")
+
+    abilities["mark_used"] = True
+    abilities["mark_active"] = True
+    abilities["mark_miss_turns"] = MARK_ABILITY["miss_turns"]
+    _tick_ability_timers(abilities)
+
+    if target["hp"] > 0:
+        mdmg = _resolve_monster_counter(target, stats, specials, log)
+        cur_hp -= mdmg
+
+    fsm_data["cur_hp"] = cur_hp
+    await _finish_turn(call, user_id, fsm_data, state, is_camp, target, log)
+
+@router.callback_query(F.data == "ability_unique")
+async def ability_unique(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    ctx = await _load_battle_context(user_id, state)
+    if not ctx:
+        try:
+            await call.answer("Сейчас не с кем сражаться.", show_alert=True)
+        except TelegramBadRequest:
+            pass
+        return
+        
+    fsm_data, is_camp, target = ctx
+    abilities = fsm_data["abilities"]
+
+    if target.get("is_boss"):
+        try:
+            await call.answer("Способности бесполезны против этого существа!", show_alert=True)
+        except TelegramBadRequest:
+            pass
+        return
+    if abilities["unique_used"]:
+        try:
+            await call.answer("Уникальная способность уже использована в этом бою.", show_alert=True)
+        except TelegramBadRequest:
+            pass
+        return
+        
+    try:
+        await call.answer()
+    except TelegramBadRequest:
+        pass
+
+    stats = fsm_data["stats"]
+    specials = fsm_data["specials"]
+    cur_hp = fsm_data["cur_hp"]
+    crab_type = fsm_data["crab_type"]
+    
+    ability = UNIQUE_ABILITIES.get(crab_type, UNIQUE_ABILITIES[1])
+    abilities["unique_used"] = True
+    log = [f"{ability['name']}!"]
+
+    consumed_mark_miss = abilities.get("mark_miss_turns", 0) > 0
+
+    if crab_type == 1:
+        heal = _do_combat_round(target, stats, specials, log, dmg_multiplier=ability["damage_mult"], guaranteed_miss=consumed_mark_miss)
+        cur_hp = min(stats["max_hp"], cur_hp + heal)
+        self_dmg = round(stats["max_hp"] * ability["self_damage_percent"] / 100)
+        cur_hp -= self_dmg
+        log.append(f"💥 Отдача: -{format_number(self_dmg)} прочности")
+        if consumed_mark_miss:
+            abilities["mark_miss_turns"] -= 1
+        _tick_ability_timers(abilities)
+        if target["hp"] > 0 and cur_hp > 0:
+            mdmg = _resolve_monster_counter(target, stats, specials, log)
+            cur_hp -= mdmg
+
+    elif crab_type == 2:
+        abilities["sprint_turns"] = ability["sprint_turns"]
+        log.append("💨 Ты срываешься с места — враг не успевает ответить!")
+        _tick_ability_timers(abilities)
+
+    elif crab_type == 3:
+        abilities["rage_active"] = True
+        heal = _do_combat_round(target, stats, specials, log, force_crit=True, guaranteed_miss=consumed_mark_miss)
+        cur_hp = min(stats["max_hp"], cur_hp + heal)
+        self_dmg = round(stats["max_hp"] * ability["self_damage_percent"] / 100)
+        cur_hp -= self_dmg
+        log.append(f"🩸 Раж отбирает {format_number(self_dmg)} прочности")
+        if consumed_mark_miss:
+            abilities["mark_miss_turns"] -= 1
+        _tick_ability_timers(abilities)
+        if target["hp"] > 0 and cur_hp > 0:
+            mdmg = _resolve_monster_counter(target, stats, specials, log)
+            cur_hp -= mdmg
+    else:
+        _tick_ability_timers(abilities)
+
+    fsm_data["cur_hp"] = cur_hp
+    await _finish_turn(call, user_id, fsm_data, state, is_camp, target, log)
 @router.callback_query(F.data == "ability_shield")
 async def ability_shield(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
