@@ -71,7 +71,7 @@ async def show_events(message: Message, state: FSMContext):
 
     if not mythic_events_unlocked(user):
         await message.answer(
-            f"🐉 Мифические ивенты с боссами открываются, когда выполнишь ЛЮБОЕ из условий:\n\n"
+            f"🐉 Мифические ивенты с боссами открываются, когда выполнишь ЛЛЮБОЕ из условий:\n\n"
             f"• {MYTHIC_EVENT_UNLOCK_MOLTS}-я линька (у тебя: {user['molts']})\n"
             f"• {MYTHIC_EVENT_UNLOCK_MAX_METERS} м. рекорд по пройденному пути (у тебя: {user['max_meters']})\n"
             f"• {MYTHIC_EVENT_UNLOCK_KILLS} убитых существ (у тебя: {user['kills']})\n\n"
@@ -146,14 +146,15 @@ async def boss_attack(call: CallbackQuery, state: FSMContext):
     # Находим данные босса для арта и текста
     boss_template = next((e for e in MYTHIC_EVENTS if e["name"] == event["name"]), MYTHIC_EVENTS[0])
 
-    # Формируем JSON босса-манекена
+    # Формируем JSON босса-манекена с добавленными метрами!
     boss_data = {
         "is_boss": True,
         "event_id": event["id"],
         "name": event["name"],
         "art": boss_template.get("art", "🐉"),
         "hp_flavor": boss_template.get("hp_flavor", "Бессмертное существо..."),
-        "accumulated_damage": 0
+        "accumulated_damage": 0,
+        "meters": user.get("cur_meters", 0)  # <-- Добавлено для корректной отрисовки глубины
     }
 
     # Полностью лечим краба перед битвой и собираем все статы
@@ -174,8 +175,8 @@ async def boss_attack(call: CallbackQuery, state: FSMContext):
     # Передаем "пустышку" нектаров, чтобы интерфейс босса остался классическим (только 1 кнопка)
     empty_nectars = {"active_nectar": None, "nectars_inv": {}, "strength_charges": 0, "combat_effects": {}}
     
-    # Передаем cur_meters (число) вместо boss_data (строки)
-    text, ikb = _render_single(full_hp, stats["max_hp"], user.get("cur_meters", 0), user["crab_type"], empty_nectars)
+    # Передаем boss_data на 3-е место, как ожидает функция
+    text, ikb = _render_single(full_hp, stats["max_hp"], boss_data, user["crab_type"], empty_nectars)
 
     await call.message.answer("🫧 Вглядываемся в муть...", reply_markup=hunt_kb(True))
     sent = await call.message.answer(text, reply_markup=ikb)
