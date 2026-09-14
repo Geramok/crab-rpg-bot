@@ -451,3 +451,59 @@ async def flush_user_buffer(redis, user_id: int):
     await run_async(_atomic_db_update)
     await redis.delete(key)
     return True
+
+import json
+
+async def auto_update_db_nectars():
+    """Автоматически обновляет базу данных для системы нектаров."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN active_nectar TEXT DEFAULT NULL")
+            await db.execute("ALTER TABLE users ADD COLUMN nectars_inv TEXT DEFAULT '{}'")
+            await db.execute("ALTER TABLE users ADD COLUMN strength_charges INTEGER DEFAULT 0")
+            await db.commit()
+            print("База данных: колонки нектаров успешно добавлены!")
+        except Exception:
+            pass # Если колонки уже есть, скрипт пойдет дальше
+
+async def get_nectars_data(user_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT active_nectar, nectars_inv, strength_charges FROM users WHERE user_id = ?", (user_id,))
+        row = await cursor.fetchone()
+        if row:
+            return {
+                "active_nectar": row["active_nectar"],
+                "nectars_inv": json.loads(row["nectars_inv"] or "{}"),
+                "strength_charges": row["strength_charges"]
+            }
+        return {"active_nectar": None, "nectars_inv": {}, "strength_charges": 0}
+
+async def update_nectars_data(user_id, active_nectar=None, nectars_inv=None, strength_charges=None):
+    async with aiosqlite.connect(DB_NAME) as db:
+        updates = []
+        params = []
+        if active_nectar is not False: 
+            updates.append("active_nectar = ?")
+            params.append(active_nectar)
+        if nectars_inv is not None:
+            updates.append("nectars_inv = ?")
+            params.append(json.dumps(nectars_inv))
+        if strength_charges is not None:
+            updates.append("strength_charges = ?")
+            params.append(strength_charges)
+        if updates:
+            params.append(user_id)
+            await db.execute(f"UPDATE users SET {', '.join(updates)} WHERE user_id = ?", params)
+            await db.commit()
+
+async def try_spend_stone(user_id, color, level, count):
+    """Списывает камни для крафта нектаров."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT count FROM stones WHERE user_id = ? AND color = ? AND level = ?", (user_id, color, level))
+        row = await cursor.fetchone()
+        if row and row[0] >= count:
+            await db.execute("UPDATE stones SET count = count - ? WHERE user_id = ? AND color = ? AND level = ?", (count, user_id, color, level))
+            await db.commit()
+            return True
+        return False
