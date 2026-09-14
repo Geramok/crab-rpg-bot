@@ -108,12 +108,19 @@ async def do_craft(call: CallbackQuery):
         await call.answer("Не хватает нужных камней!", show_alert=True)
         return
 
-    # Списание
+    # Списание через run_async
     for res_key, req_count in data["res_cost"].items():
-        await database.run_async(database.try_spend_resource, user_id, res_key, req_count)
-    await database.run_async(database.try_spend_stone, user_id, st['color'], st['level'], st['count'])
+        success_res = await database.run_async(database.try_spend_resource, user_id, res_key, req_count)
+        if not success_res:
+            await call.answer("Ошибка списания ресурсов!", show_alert=True)
+            return
+            
+    success_stone = await database.run_async(database.try_spend_stone, user_id, st['color'], st['level'], st['count'])
+    if not success_stone:
+        await call.answer("Ошибка списания камней!", show_alert=True)
+        return
     
-    # Выдача
+    # Выдача нектара
     nectar_db = await database.get_nectars_data(user_id)
     inv = nectar_db["nectars_inv"]
     inv[nectar_key] = inv.get(nectar_key, 0) + 1
@@ -121,4 +128,8 @@ async def do_craft(call: CallbackQuery):
     
     await call.answer(f"Скрафчено: {data['name']}!", show_alert=True)
     text, ikb = await _craft_menu_text_and_kb(user_id, nectar_key)
-    await call.message.edit_text(text, reply_markup=ikb)
+    
+    try:
+        await call.message.edit_text(text, reply_markup=ikb)
+    except TelegramBadRequest:
+        pass
