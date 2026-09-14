@@ -14,26 +14,47 @@ from data import (
     PERMANENT_BOOST_MULT,
 )
 
-MOLT_BASE_LEVEL = 70
-MOLT_LEVEL_STEP = 15
+MOLT_UNLOCK_LEVEL = 100
 
 
-def molt_required_level(molts):
-    return MOLT_BASE_LEVEL + molts * MOLT_LEVEL_STEP
+def can_molt(crab_level: int) -> bool:
+    """Проверяет, достиг ли краб 100-го уровня для линьки."""
+    return crab_level >= MOLT_UNLOCK_LEVEL
+
+
+def calculate_dna_reward(crab_level: int) -> int:
+    """
+    Рассчитывает ДНК по формуле: (Уровень / 4) ^ 1.5
+    Строго возвращает 0, если уровень меньше 100.
+    """
+    if crab_level < MOLT_UNLOCK_LEVEL:
+        return 0
+    return int((crab_level / 4.0) ** 1.5)
+
+
+def get_mutation_cost(purchased_count: int) -> int:
+    """
+    Рассчитывает стоимость покупки новой мутации на основе количества покупок за ДНК.
+    Первые 5 покупок фиксированы, далее цена растет на 50%.
+    """
+    base_prices = [10, 25, 50, 85, 130]
+    
+    if purchased_count < len(base_prices):
+        return base_prices[purchased_count]
+    
+    cost = base_prices[-1]
+    extra_purchases = purchased_count - len(base_prices) + 1
+    
+    for _ in range(extra_purchases):
+        cost = int(cost * 1.5)
+        
+    return cost
 
 
 def level_up_cost(current_level, molts):
     base = 6 * (current_level ** 1.35)
     molt_scale = 1 + molts * 0.4
     return max(5, round(base * molt_scale))
-
-
-def dna_points_for_molt(molts, crab_level):
-    required = molt_required_level(molts)
-    base = 14 * (1.45 ** molts)
-    over_levels = max(0, crab_level - required)
-    bonus = over_levels * 1.0
-    return round(base + bonus)
 
 
 def roll_mutation_variant(slot):
@@ -188,13 +209,21 @@ def get_effective_stats(user, stones, mutations=None):
         "max_hp": float(crab_base["max_hp"]),
     }
 
+    # Плоские прибавки за уровень краба
     stats["damage"] += user["crab_level"] * 1.4
     stats["max_hp"] += user["crab_level"] * 4.5
 
+    # Плоские прибавки от камней
     for st in stones:
         effect = STONE_COLORS[st["color"]]["effect"]
         bonus = STONE_EFFECT_BONUS[effect][st["level"]] * st["count"]
         stats[effect] += bonus
+
+    # Расчет процентных множителей от мутаций
+    mut_multipliers = {
+        "damage": 1.0, "evasion": 1.0, "luck": 1.0,
+        "crit_chance": 1.0, "crit_damage": 1.0, "max_hp": 1.0
+    }
 
     if mutations:
         mut_list = mutations if isinstance(mutations, list) else [{"slot": k, **v} for k, v in mutations.items()]
@@ -204,10 +233,22 @@ def get_effective_stats(user, stones, mutations=None):
             variant = get_mutation_variant(m["slot"], m["variant_key"])
             if not variant:
                 continue
+            
             level = m["level"]
-            stats[variant["buff_stat"]] += variant["buff_per_level"] * level
-            stats[variant["debuff_stat"]] -= variant["debuff_per_level"] * level
+            
+            if "base_buff" in variant:
+                buff_pct = variant["base_buff"] + variant["buff_per_level"] * level
+                mut_multipliers[variant["buff_stat"]] += buff_pct / 100.0
+                
+            if "base_debuff" in variant:
+                debuff_pct = variant["base_debuff"] + variant["debuff_per_level"] * level
+                mut_multipliers[variant["debuff_stat"]] -= debuff_pct / 100.0
 
+    # Применение процентных множителей к базовым характеристикам
+    for stat_key in stats:
+        stats[stat_key] = max(0.0, stats[stat_key] * mut_multipliers.get(stat_key, 1.0))
+
+    # Жесткие ограничения характеристик
     stats["evasion"] = max(0.0, min(stats["evasion"], 75.0))
     stats["crit_chance"] = max(0.0, min(stats["crit_chance"], 90.0))
     stats["damage"] = max(1.0, stats["damage"])
@@ -366,10 +407,6 @@ def format_number(num: int) -> str:
         return formatted.replace(".0к", "к")
     return str(num)
 
-
-def cost_new_mutation(owned_count):
-    base_cost = 25
-    return base_cost + (owned_count * 35)
 
 def cost_upgrade_mutation(current_level):
     return max(10, round(15 * (current_level ** 1.4)))
