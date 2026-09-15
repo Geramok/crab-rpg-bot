@@ -63,7 +63,6 @@ def _abilities_status_line(abilities, crab_type, nectars):
     if abilities["rage_active"]:
         parts.append("🩸 Раж активен")
         
-    # Отображение пассивных нектаров
     if nectars.get("strength_charges", 0) > 0:
         parts.append(f"🔴 Сила (боёв: {nectars['strength_charges']})")
     if nectars.get("combat_effects", {}).get("rage"):
@@ -82,7 +81,6 @@ def _abilities_buttons(abilities, crab_type, nectars):
     
     buttons = [[InlineKeyboardButton(text=shield_label, callback_data="ability_shield")]]
     
-    # Кнопка надетого нектара
     active_nectar = nectars.get("active_nectar")
     inv = nectars.get("nectars_inv", {})
     if active_nectar and inv.get(active_nectar, 0) > 0:
@@ -175,7 +173,10 @@ async def perform_search(message: Message, state: FSMContext):
     if buffered_hp is not None: user["cur_hp"] = float(buffered_hp)
 
     stones = await database.run_async(database.get_stones, user_id)
-    mutations = await database.run_async(database.get_mutations_v2, user_id)
+    
+    # ИСПОЛЬЗУЕМ НОВУЮ ФУНКЦИЮ V3
+    mutations = await database.run_async(database.get_user_mutations_v3, user_id)
+    
     stats = get_effective_stats(user, stones, mutations)
     healed_hp = apply_idle_regen(user, stats, int(time.time()))
     crab_type = user["crab_type"]
@@ -203,7 +204,7 @@ async def perform_search(message: Message, state: FSMContext):
         cur_hp=healed_hp, stats=stats, specials=list(get_equipped_special_effects(mutations)),
         crab_type=crab_type, cur_meters=user["cur_meters"], max_meters=user["max_meters"],
         monster=monster, abilities=_get_abilities(monster), battle_message_id=sent.message_id, nectars=nectars_db,
-        last_action_time=0.0 # Инициализируем таймер анти-спама
+        last_action_time=0.0
     )
 
 @router.message(StateFilter(Nav.hunt, Nav.main, None), F.text.contains("Рыскать по дну"))
@@ -330,7 +331,6 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
     last_line, now = "\n".join(log), int(time.time())
     redis_client = state.storage.redis
 
-    # 1. Краб погиб
     if cur_hp <= 0:
         await database.flush_user_buffer(redis_client, user_id)
         user_db = await database.run_async(database.get_user, user_id)
@@ -350,12 +350,10 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
             await message.answer("Можешь продолжать рыскать.", reply_markup=hunt_kb(False))
             return
 
-    # 2. Враг побежден
     if not target.get("is_boss") and target.get("hp", 1) <= 0:
         user_db = await database.run_async(database.get_user, user_id)
         nectar_eff = nectars.get("combat_effects", {})
         
-        # Засада
         if is_camp:
             monster = fsm_data["monster"]
             monster["defeated"][monster["current"]] = True
@@ -384,7 +382,6 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
             await message.answer("Готов к новому рысканью.", reply_markup=hunt_kb(False))
             return
 
-        # Обычный монстр
         mult = 2.5 if nectar_eff.get("sparkling") else 1.0
         gold = round(gold_reward(fsm_data["monster"], stats, user_db) * mult)
         if "greed" in fsm_data["specials"] and random.random() * 100 < 15:
@@ -402,7 +399,6 @@ async def _finish_turn(call, user_id, fsm_data, state: FSMContext, is_camp, targ
         await message.answer("Готов к новому рысканью.", reply_markup=hunt_kb(False))
         return
 
-    # 3. Бой продолжается
     await state.update_data(monster=fsm_data["monster"], cur_hp=cur_hp, abilities=abilities, nectars=nectars)
     if is_camp: text, ikb = _render_camp(cur_hp, stats["max_hp"], fsm_data["monster"], fsm_data["crab_type"], nectars, last_line)
     else: text, ikb = _render_single(cur_hp, stats["max_hp"], fsm_data["monster"], fsm_data["crab_type"], nectars, last_line)
@@ -417,18 +413,15 @@ async def attack(call: CallbackQuery, state: FSMContext):
         return
     fsm_data, is_camp, target = ctx
     
-    # === ДОБАВЛЕНА АНТИ-СПАМ ЗАЩИТА ===
     now = time.time()
     last_action = fsm_data.get("last_action_time", 0)
-    if now - last_action < 0.7:  # Кулдаун между кликами 0.7 секунды
+    if now - last_action < 0.7:
         try: await call.answer("⏳ Не так быстро!", show_alert=False)
         except TelegramBadRequest: pass
         return
     
-    # Обновляем таймер в FSM напрямую
     fsm_data["last_action_time"] = now
     await state.update_data(last_action_time=now)
-    # ==================================
     
     try: await call.answer()
     except TelegramBadRequest: pass
@@ -471,7 +464,6 @@ async def drink_nectar(call: CallbackQuery, state: FSMContext):
         return
     fsm_data, is_camp, target = ctx
     
-    # === ДОБАВЛЕНА АНТИ-СПАМ ЗАЩИТА ===
     now = time.time()
     if now - fsm_data.get("last_action_time", 0) < 0.7:
         try: await call.answer("⏳ Не так быстро!", show_alert=False)
@@ -479,7 +471,6 @@ async def drink_nectar(call: CallbackQuery, state: FSMContext):
         return
     fsm_data["last_action_time"] = now
     await state.update_data(last_action_time=now)
-    # ==================================
     
     nectars = fsm_data["nectars"]
     active = nectars["active_nectar"]
@@ -498,12 +489,10 @@ async def drink_nectar(call: CallbackQuery, state: FSMContext):
     try: await call.answer()
     except TelegramBadRequest: pass
 
-    # Списываем нектар
     inv[active] -= 1
     await database.update_nectars_data(user_id, nectars_inv=inv)
     
     log = []
-    # Эффекты зелья
     if active == "strength":
         nectars["strength_charges"] = 5
         await database.update_nectars_data(user_id, strength_charges=5)
@@ -521,9 +510,8 @@ async def drink_nectar(call: CallbackQuery, state: FSMContext):
         nectars["combat_effects"]["sparkling"] = True
         log.append("🍯 Сверкающий нектар выпит. Золотая лихорадка началась!")
 
-    # Монстр бьет в ответ (выпивание тратит ход)
     if target.get("is_boss") or target.get("hp", 0) > 0:
-        if fsm_data["cur_hp"] > 0: # Если мы не убили себя нектаром ярости
+        if fsm_data["cur_hp"] > 0:
             evasion_penalty = UNIQUE_ABILITIES[2]["fatigue_evasion_penalty"] if fsm_data["abilities"].get("fatigue_turns", 0) > 0 else 0
             fsm_data["cur_hp"] -= _resolve_monster_counter(target, fsm_data["stats"], fsm_data["specials"], log, evasion_penalty=evasion_penalty, nectars=nectars)
 
@@ -531,12 +519,10 @@ async def drink_nectar(call: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "ability_shield")
 async def ability_shield(call: CallbackQuery, state: FSMContext):
-    # Код щита (остается стандартным)
     ctx = await _load_battle_context(call.from_user.id, state)
     if not ctx: return
     fsm_data, is_camp, target = ctx
     
-    # === ДОБАВЛЕНА АНТИ-СПАМ ЗАЩИТА ===
     now = time.time()
     if now - fsm_data.get("last_action_time", 0) < 0.7:
         try: await call.answer("⏳ Не так быстро!", show_alert=False)
@@ -544,7 +530,6 @@ async def ability_shield(call: CallbackQuery, state: FSMContext):
         return
     fsm_data["last_action_time"] = now
     await state.update_data(last_action_time=now)
-    # ==================================
     
     if target.get("is_boss") or fsm_data["abilities"]["shield_cooldown"] > 0:
         try: await call.answer("Недоступно!", show_alert=True)
@@ -561,12 +546,10 @@ async def ability_shield(call: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "ability_unique")
 async def ability_unique(call: CallbackQuery, state: FSMContext):
-    # Уникальные способности крабов
     ctx = await _load_battle_context(call.from_user.id, state)
     if not ctx: return
     fsm_data, is_camp, target = ctx
     
-    # === ДОБАВЛЕНА АНТИ-СПАМ ЗАЩИТА ===
     now = time.time()
     if now - fsm_data.get("last_action_time", 0) < 0.7:
         try: await call.answer("⏳ Не так быстро!", show_alert=False)
@@ -574,7 +557,6 @@ async def ability_unique(call: CallbackQuery, state: FSMContext):
         return
     fsm_data["last_action_time"] = now
     await state.update_data(last_action_time=now)
-    # ==================================
     
     if target.get("is_boss") or fsm_data["abilities"]["unique_used"]:
         try: await call.answer("Недоступно!", show_alert=True)
