@@ -5,8 +5,7 @@ from aiogram import Router
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 import database
-from data import STONE_COLORS, RESOURCES, EVENT_CHESTS
-from game_logic import get_mutation_variant
+from data import STONE_COLORS, RESOURCES, EVENT_CHESTS, PASSIVE_MUTATIONS, ACTIVE_MUTATIONS
 from keyboards import kb, BACK
 
 router = Router()
@@ -14,7 +13,10 @@ router = Router()
 async def show_inventory(message: Message):
     user = await database.run_async(database.get_user, message.from_user.id)
     stones = await database.run_async(database.get_stones, message.from_user.id)
-    mutations = await database.run_async(database.get_mutations_v2, message.from_user.id)
+    
+    # ИСПОЛЬЗУЕМ НОВУЮ ФУНКЦИЮ БАЗЫ ДАННЫХ V3
+    mutations = await database.run_async(database.get_user_mutations_v3, message.from_user.id)
+    
     resources = await database.run_async(database.get_resources, message.from_user.id)
     chests = await database.run_async(database.get_chests, message.from_user.id)
 
@@ -43,28 +45,38 @@ async def show_inventory(message: Message):
     res_txt = " | ".join(f"{info['name']} ×{resources.get(key, 0)}" for key, info in RESOURCES.items())
     text += f"{res_txt}\n"
 
-    # 3. Вывод мутаций (Экипированные и В запасе)
+    # 3. Вывод мутаций (Разделяем на Активные и Пассивные)
     text += separator
     text += "🧪 <b>Мутации:</b>\n"
+    
     equipped = []
     unequipped = []
+    passives = []
     
     for m in mutations:
         if m["level"] > 0 and m.get("variant_key"):
-            variant = get_mutation_variant(m["slot"], m["variant_key"])
-            if variant:
-                prefix = "🌟 " if variant.get("is_special") else ""
-                mut_name = f"{prefix}{variant['name']} (Ур.{m['level']})"
-                if m["equipped"]:
-                    equipped.append(f"🟢 {mut_name}")
-                else:
-                    unequipped.append(f"🔵 {mut_name}")
+            if m["is_active"] == 1:
+                # Обработка активных (ивентовых) мутаций
+                variant = ACTIVE_MUTATIONS.get(m["variant_key"])
+                if variant:
+                    mut_name = f"🌟 {variant['name']} (Ур.{m['level']})"
+                    if m["equipped"] == 1:
+                        equipped.append(f"🟢 {mut_name}")
+                    else:
+                        unequipped.append(f"🔵 {mut_name}")
+            else:
+                # Обработка пассивных (кристальных) мутаций
+                variant = PASSIVE_MUTATIONS.get(m["variant_key"])
+                if variant:
+                    passives.append(f"🔮 {variant['name']} (Ур.{m['level']})")
                     
-    if equipped or unequipped:
+    if equipped or unequipped or passives:
         if equipped:
-            text += "<b>Надето:</b>\n" + "\n".join(equipped) + "\n"
+            text += "<b>Надето (Активные):</b>\n" + "\n".join(equipped) + "\n"
         if unequipped:
-            text += "<b>В запасе:</b>\n" + "\n".join(unequipped) + "\n"
+            text += "<b>В запасе (Активные):</b>\n" + "\n".join(unequipped) + "\n"
+        if passives:
+            text += f"<b>Пассивные ({len(passives)}/27):</b>\n" + "\n".join(passives) + "\n"
     else:
         text += "<i>нет мутаций</i>\n"
 
@@ -98,6 +110,6 @@ async def show_inventory(message: Message):
                     
     ikb = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
 
-    # Очищаем нижнюю клавиатуру от лишнего мусора и выводим Нору с инлайн-кнопками
+    # Очищаем нижнюю клавиатуру от лишнего мусора и выводим Нору
     await message.answer("🎒 Раскладываем запасы...", reply_markup=kb([BACK]))
     await message.answer(text, reply_markup=ikb)
