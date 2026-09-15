@@ -71,7 +71,7 @@ async def show_events(message: Message, state: FSMContext):
 
     if not mythic_events_unlocked(user):
         await message.answer(
-            f"🐉 Мифические ивенты с боссами открываются, когда выполнишь ЛЛЮБОЕ из условий:\n\n"
+            f"🐉 Мифические ивенты с боссами открываются, когда выполнишь ЛЮБОЕ из условий:\n\n"
             f"• {MYTHIC_EVENT_UNLOCK_MOLTS}-я линька (у тебя: {user['molts']})\n"
             f"• {MYTHIC_EVENT_UNLOCK_MAX_METERS} м. рекорд по пройденному пути (у тебя: {user['max_meters']})\n"
             f"• {MYTHIC_EVENT_UNLOCK_KILLS} убитых существ (у тебя: {user['kills']})\n\n"
@@ -143,10 +143,8 @@ async def boss_attack(call: CallbackQuery, state: FSMContext):
         await call.answer("Ивент уже завершён.", show_alert=True)
         return
 
-    # Находим данные босса для арта и текста
     boss_template = next((e for e in MYTHIC_EVENTS if e["name"] == event["name"]), MYTHIC_EVENTS[0])
 
-    # Формируем JSON босса-манекена с добавленными метрами!
     boss_data = {
         "is_boss": True,
         "event_id": event["id"],
@@ -154,34 +152,28 @@ async def boss_attack(call: CallbackQuery, state: FSMContext):
         "art": boss_template.get("art", "🐉"),
         "hp_flavor": boss_template.get("hp_flavor", "Бессмертное существо..."),
         "accumulated_damage": 0,
-        "meters": user.get("cur_meters", 0)  # <-- Добавлено для корректной отрисовки глубины
+        "meters": user.get("cur_meters", 0)  
     }
 
-    # Полностью лечим краба перед битвой и собираем все статы
+    # ИСПОЛЬЗУЕМ НОВУЮ ФУНКЦИЮ V3 ДЛЯ БОССА
     from game_logic import get_effective_stats, get_equipped_special_effects
     stones = await database.run_async(database.get_stones, call.from_user.id)
-    mutations = await database.run_async(database.get_mutations_v2, call.from_user.id)
+    mutations = await database.run_async(database.get_user_mutations_v3, call.from_user.id)
     stats = get_effective_stats(user, stones, mutations)
     full_hp = stats["max_hp"]
 
     await call.answer("Битва началась!")
-
-    # Переводим в состояние охоты и отрисовываем экран
     await state.set_state(Nav.hunt)
 
     from handlers.hunt import _render_single, _push_battle_update, _get_abilities
     from keyboards import hunt_kb
     
-    # Передаем "пустышку" нектаров, чтобы интерфейс босса остался классическим (только 1 кнопка)
     empty_nectars = {"active_nectar": None, "nectars_inv": {}, "strength_charges": 0, "combat_effects": {}}
-    
-    # Передаем boss_data на 3-е место, как ожидает функция
     text, ikb = _render_single(full_hp, stats["max_hp"], boss_data, user["crab_type"], empty_nectars)
 
     await call.message.answer("🫧 Вглядываемся в муть...", reply_markup=hunt_kb(True))
     sent = await call.message.answer(text, reply_markup=ikb)
 
-    # 🌟 Записываем босса прямо в FSM-память, чтобы боевая логика hunt.py его увидела
     fsm_data = {
         "cur_hp": full_hp,
         "stats": stats,
