@@ -62,6 +62,10 @@ def init_db():
         ]:
             _safe_migrate(conn, f"ALTER TABLE users ADD COLUMN {col} {coltype}")
 
+        # НОВЫЕ КОЛОНКИ ДЛЯ ЭВОЛЮЦИИ
+        _safe_migrate(conn, "ALTER TABLE users ADD COLUMN evolution_stage INTEGER DEFAULT 0")
+        _safe_migrate(conn, "ALTER TABLE users ADD COLUMN evolution_tree TEXT DEFAULT '[]'")
+
         conn.execute("""
         CREATE TABLE IF NOT EXISTS stones (
             user_id INTEGER, color TEXT, level INTEGER, count INTEGER DEFAULT 0,
@@ -69,29 +73,14 @@ def init_db():
         )
         """)
         
+        # НОВАЯ ТАБЛИЦА МУТАЦИЙ V3
         conn.execute("""
-        CREATE TABLE IF NOT EXISTS mutations (
-            user_id INTEGER, slot TEXT, level INTEGER DEFAULT 0,
-            equipped INTEGER DEFAULT 0, variant_key TEXT,
-            PRIMARY KEY (user_id, slot)
-        )
-        """)
-        _safe_migrate(conn, "ALTER TABLE mutations ADD COLUMN variant_key TEXT")
-
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS mutations_v2 (
-            user_id INTEGER, variant_key TEXT, slot TEXT, level INTEGER DEFAULT 1,
+        CREATE TABLE IF NOT EXISTS mutations_v3 (
+            user_id INTEGER, variant_key TEXT, is_active INTEGER, level INTEGER DEFAULT 1,
             equipped INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, variant_key)
         )
         """)
-        try:
-            conn.execute("""
-            INSERT OR IGNORE INTO mutations_v2 (user_id, variant_key, slot, level, equipped)
-            SELECT user_id, variant_key, slot, level, equipped FROM mutations WHERE variant_key IS NOT NULL
-            """)
-        except Exception:
-            pass
 
         conn.execute("""
         CREATE TABLE IF NOT EXISTS resources (
@@ -217,7 +206,7 @@ def get_random_players(exclude_user_id, limit=3):
         ).fetchall()
         return [dict(r) for r in rows]
 
-# ---------------- STONES ----------------
+# ---------------- STONES И РЕСУРСЫ ----------------
 def add_stone(user_id, color, level, amount=1):
     with closing(get_conn()) as conn, conn:
         conn.execute(
@@ -228,12 +217,9 @@ def add_stone(user_id, color, level, amount=1):
 
 def get_stones(user_id):
     with closing(get_conn()) as conn:
-        rows = conn.execute(
-            "SELECT color, level, count FROM stones WHERE user_id=? AND count > 0", (user_id,)
-        ).fetchall()
+        rows = conn.execute("SELECT color, level, count FROM stones WHERE user_id=? AND count > 0", (user_id,)).fetchall()
         return [dict(r) for r in rows]
 
-# ---------------- RESOURCES / КРАФТ ----------------
 def add_resource(user_id, key, amount=1):
     with closing(get_conn()) as conn, conn:
         conn.execute(
@@ -244,66 +230,58 @@ def add_resource(user_id, key, amount=1):
 
 def get_resources(user_id):
     with closing(get_conn()) as conn:
-        rows = conn.execute(
-            "SELECT key, count FROM resources WHERE user_id=?", (user_id,)
-        ).fetchall()
+        rows = conn.execute("SELECT key, count FROM resources WHERE user_id=?", (user_id,)).fetchall()
         return {r["key"]: r["count"] for r in rows}
 
 def try_craft(user_id, recipe):
     with closing(get_conn()) as conn, conn:
-        current = {
-            r["key"]: r["count"]
-            for r in conn.execute("SELECT key, count FROM resources WHERE user_id=?", (user_id,)).fetchall()
-        }
+        current = {r["key"]: r["count"] for r in conn.execute("SELECT key, count FROM resources WHERE user_id=?", (user_id,)).fetchall()}
         for key, need in recipe.items():
-            if current.get(key, 0) < need:
-                return False
+            if current.get(key, 0) < need: return False
         for key, need in recipe.items():
-            conn.execute(
-                "UPDATE resources SET count = count - ? WHERE user_id=? AND key=?",
-                (need, user_id, key),
-            )
+            conn.execute("UPDATE resources SET count = count - ? WHERE user_id=? AND key=?", (need, user_id, key))
         return True
 
-# ---------------- MUTATIONS V2 ----------------
-def get_mutations_v2(user_id):
+# ---------------- НОВЫЕ МУТАЦИИ V3 И ЭВОЛЮЦИЯ ----------------
+def get_user_mutations_v3(user_id):
     with closing(get_conn()) as conn:
-        rows = conn.execute("SELECT * FROM mutations_v2 WHERE user_id=?", (user_id,)).fetchall()
+        rows = conn.execute("SELECT * FROM mutations_v3 WHERE user_id=?", (user_id,)).fetchall()
         return [dict(r) for r in rows]
 
-def get_mutation_by_key(user_id, variant_key):
-    with closing(get_conn()) as conn:
-        row = conn.execute("SELECT * FROM mutations_v2 WHERE user_id=? AND variant_key=?", (user_id, variant_key)).fetchone()
-        return dict(row) if row else None
-
-def add_new_mutation(user_id, variant_key, slot):
+def add_new_mutation_v3(user_id, variant_key, is_active):
     with closing(get_conn()) as conn, conn:
         conn.execute(
-            "INSERT OR IGNORE INTO mutations_v2 (user_id, variant_key, slot, level, equipped) VALUES (?, ?, ?, 1, 0)",
-            (user_id, variant_key, slot)
+            "INSERT OR IGNORE INTO mutations_v3 (user_id, variant_key, is_active, level, equipped) VALUES (?, ?, ?, 1, 0)",
+            (user_id, variant_key, is_active)
         )
 
-def equip_mutation(user_id, variant_key, slot):
+def equip_active_mutation(user_id, variant_key):
     with closing(get_conn()) as conn, conn:
-        conn.execute("UPDATE mutations_v2 SET equipped=0 WHERE user_id=? AND slot=?", (user_id, slot))
-        conn.execute("UPDATE mutations_v2 SET equipped=1 WHERE user_id=? AND variant_key=?", (user_id, variant_key))
+        conn.execute("UPDATE mutations_v3 SET equipped=1 WHERE user_id=? AND variant_key=?", (user_id, variant_key))
 
-def unequip_mutation(user_id, variant_key):
+def unequip_active_mutation(user_id, variant_key):
     with closing(get_conn()) as conn, conn:
-        conn.execute("UPDATE mutations_v2 SET equipped=0 WHERE user_id=? AND variant_key=?", (user_id, variant_key))
+        conn.execute("UPDATE mutations_v3 SET equipped=0 WHERE user_id=? AND variant_key=?", (user_id, variant_key))
 
-def upgrade_mutation(user_id, variant_key):
+def upgrade_mutation_v3(user_id, variant_key):
     with closing(get_conn()) as conn, conn:
-        conn.execute("UPDATE mutations_v2 SET level = level + 1 WHERE user_id=? AND variant_key=?", (user_id, variant_key))
+        conn.execute("UPDATE mutations_v3 SET level = level + 1 WHERE user_id=? AND variant_key=?", (user_id, variant_key))
 
-# ---------------- СУНДУКИ (CHESTS) ----------------
+def update_evolution_tree(user_id, new_stage, node_key):
+    """Обновляет этап эволюции и добавляет новый узел в древо"""
+    with closing(get_conn()) as conn, conn:
+        row = conn.execute("SELECT evolution_tree FROM users WHERE user_id=?", (user_id,)).fetchone()
+        tree = json.loads(row["evolution_tree"]) if row and row["evolution_tree"] else []
+        tree.append(node_key)
+        conn.execute(
+            "UPDATE users SET evolution_stage=?, evolution_tree=? WHERE user_id=?",
+            (new_stage, json.dumps(tree), user_id)
+        )
+
+# ---------------- СУНДУКИ И ИВЕНТЫ ----------------
 def add_chest(user_id, chest_type, amount=1):
     with closing(get_conn()) as conn, conn:
-        conn.execute(
-            "INSERT INTO chests (user_id, chest_type, count) VALUES (?, ?, ?) "
-            "ON CONFLICT(user_id, chest_type) DO UPDATE SET count = count + ?",
-            (user_id, chest_type, amount, amount)
-        )
+        conn.execute("INSERT INTO chests (user_id, chest_type, count) VALUES (?, ?, ?) ON CONFLICT(user_id, chest_type) DO UPDATE SET count = count + ?", (user_id, chest_type, amount, amount))
 
 def get_chests(user_id):
     with closing(get_conn()) as conn:
@@ -312,20 +290,13 @@ def get_chests(user_id):
 
 def try_spend_chest(user_id, chest_type, amount=1):
     with closing(get_conn()) as conn, conn:
-        cur = conn.execute(
-            "UPDATE chests SET count = count - ? WHERE user_id=? AND chest_type=? AND count >= ?",
-            (amount, user_id, chest_type, amount)
-        )
+        cur = conn.execute("UPDATE chests SET count = count - ? WHERE user_id=? AND chest_type=? AND count >= ?", (amount, user_id, chest_type, amount))
         return cur.rowcount > 0
 
-# ---------------- EVENTS (boss) ----------------
 def create_event(name, description, duration_seconds):
     now = int(time.time())
     with closing(get_conn()) as conn, conn:
-        cur = conn.execute(
-            "INSERT INTO events (name, description, started_at, ends_at, active) VALUES (?, ?, ?, ?, 1)",
-            (name, description, now, now + duration_seconds),
-        )
+        cur = conn.execute("INSERT INTO events (name, description, started_at, ends_at, active) VALUES (?, ?, ?, ?, 1)", (name, description, now, now + duration_seconds))
         return cur.lastrowid
 
 def get_active_event():
@@ -335,118 +306,61 @@ def get_active_event():
 
 def add_event_damage(event_id, user_id, damage):
     with closing(get_conn()) as conn, conn:
-        conn.execute(
-            "INSERT INTO event_damage (event_id, user_id, damage) VALUES (?, ?, ?) "
-            "ON CONFLICT(event_id, user_id) DO UPDATE SET damage = damage + ?",
-            (event_id, user_id, damage, damage),
-        )
+        conn.execute("INSERT INTO event_damage (event_id, user_id, damage) VALUES (?, ?, ?) ON CONFLICT(event_id, user_id) DO UPDATE SET damage = damage + ?", (event_id, user_id, damage, damage))
 
 def get_event_leaderboard(event_id, limit=50):
     with closing(get_conn()) as conn:
-        rows = conn.execute(
-            "SELECT user_id, damage FROM event_damage WHERE event_id=? ORDER BY damage DESC LIMIT ?",
-            (event_id, limit),
-        ).fetchall()
+        rows = conn.execute("SELECT user_id, damage FROM event_damage WHERE event_id=? ORDER BY damage DESC LIMIT ?", (event_id, limit)).fetchall()
         return [dict(r) for r in rows]
 
 def get_all_event_participants(event_id):
     with closing(get_conn()) as conn:
-        rows = conn.execute(
-            "SELECT user_id, damage FROM event_damage WHERE event_id=? ORDER BY damage DESC",
-            (event_id,),
-        ).fetchall()
+        rows = conn.execute("SELECT user_id, damage FROM event_damage WHERE event_id=? ORDER BY damage DESC", (event_id,)).fetchall()
         return [dict(r) for r in rows]
 
 def close_event(event_id):
     with closing(get_conn()) as conn, conn:
         conn.execute("UPDATE events SET active=0 WHERE id=?", (event_id,))
 
-# ---------------- ПРОМОКОДЫ ----------------
-def try_redeem_promo(user_id, code, gold=0, dna_points=0, nautilus_shells=0, permanent_boost=False):
-    with closing(get_conn()) as conn, conn:
-        try:
-            conn.execute(
-                "INSERT INTO promo_redemptions (user_id, code, redeemed_at) VALUES (?, ?, ?)",
-                (user_id, code, int(time.time())),
-            )
-        except sqlite3.IntegrityError:
-            return False
-        if permanent_boost:
-            conn.execute(
-                "UPDATE users SET gold = gold + ?, dna_points = dna_points + ?, "
-                "nautilus_shells = nautilus_shells + ?, total_earned_gold = total_earned_gold + ?, "
-                "permanent_boost = 1 WHERE user_id = ?",
-                (gold, dna_points, nautilus_shells, gold, user_id),
-            )
-        else:
-            conn.execute(
-                "UPDATE users SET gold = gold + ?, dna_points = dna_points + ?, "
-                "nautilus_shells = nautilus_shells + ?, total_earned_gold = total_earned_gold + ? "
-                "WHERE user_id = ?",
-                (gold, dna_points, nautilus_shells, gold, user_id),
-            )
-        return True
-
 # ---------------- БУФЕРИЗАЦИЯ ----------------
 async def add_to_buffer(redis, user_id: int, gold: int = 0, kills: int = 0, cur_meters: int = 0, max_meters: int = 0, cur_hp: float = None, last_hp_regen_ts: int = None):
-    """Добавляет фарм, метры и текущее здоровье во временный буфер Redis."""
     key = f"user_buffer:{user_id}"
     await redis.hincrby(key, "gold", gold)
     await redis.hincrby(key, "kills", kills)
-    
-    if cur_meters > 0:
-        await redis.hset(key, "cur_meters", cur_meters)
-        
+    if cur_meters > 0: await redis.hset(key, "cur_meters", cur_meters)
     current_max = await redis.hget(key, "max_meters")
     current_max = int(current_max) if current_max else 0
-    if max_meters > current_max:
-        await redis.hset(key, "max_meters", max_meters)
-        
-    if cur_hp is not None:
-        await redis.hset(key, "cur_hp", str(cur_hp))
-    if last_hp_regen_ts is not None:
-        await redis.hset(key, "last_hp_regen_ts", last_hp_regen_ts)
-        
+    if max_meters > current_max: await redis.hset(key, "max_meters", max_meters)
+    if cur_hp is not None: await redis.hset(key, "cur_hp", str(cur_hp))
+    if last_hp_regen_ts is not None: await redis.hset(key, "last_hp_regen_ts", last_hp_regen_ts)
     await redis.hset(key, "last_action_ts", int(time.time()))
 
 async def flush_user_buffer(redis, user_id: int):
-    """Атомарно сливает буфер из Redis в SQLite и очищает его."""
     key = f"user_buffer:{user_id}"
     buffer_data = await redis.hgetall(key)
-    
-    if not buffer_data:
-        return False
-        
+    if not buffer_data: return False
     gold = int(buffer_data.get(b"gold", 0))
     kills = int(buffer_data.get(b"kills", 0))
     cur_meters = int(buffer_data.get(b"cur_meters", 0))
     max_meters = int(buffer_data.get(b"max_meters", 0))
-    
     raw_hp = buffer_data.get(b"cur_hp")
     raw_regen_ts = buffer_data.get(b"last_hp_regen_ts")
 
     def _atomic_db_update():
         with closing(get_conn()) as conn, conn:
             query = """
-                UPDATE users 
-                SET gold = gold + ?,
-                    total_earned_gold = total_earned_gold + ?,
-                    kills = kills + ?,
-                    cur_meters = CASE WHEN ? > 0 THEN ? ELSE cur_meters END,
-                    max_meters = MAX(max_meters, ?)
+                UPDATE users SET gold = gold + ?, total_earned_gold = total_earned_gold + ?, kills = kills + ?,
+                cur_meters = CASE WHEN ? > 0 THEN ? ELSE cur_meters END, max_meters = MAX(max_meters, ?)
             """
             params = [gold, gold, kills, cur_meters, cur_meters, max_meters]
-
             if raw_hp is not None:
                 query += ", cur_hp = ?"
                 params.append(float(raw_hp))
             if raw_regen_ts is not None:
                 query += ", last_hp_regen_ts = ?"
                 params.append(int(raw_regen_ts))
-
             query += " WHERE user_id = ?"
             params.append(user_id)
-            
             conn.execute(query, params)
 
     await run_async(_atomic_db_update)
@@ -455,37 +369,27 @@ async def flush_user_buffer(redis, user_id: int):
 
 # ---------------- НЕКТАРЫ ----------------
 async def auto_update_db_nectars():
-    """Автоматически обновляет базу данных для системы нектаров."""
     async with aiosqlite.connect(DB_PATH) as db:
         try:
             await db.execute("ALTER TABLE users ADD COLUMN active_nectar TEXT DEFAULT NULL")
             await db.execute("ALTER TABLE users ADD COLUMN nectars_inv TEXT DEFAULT '{}'")
             await db.execute("ALTER TABLE users ADD COLUMN strength_charges INTEGER DEFAULT 0")
             await db.commit()
-            print("База данных: колонки нектаров успешно добавлены!")
         except Exception:
             pass
 
 async def get_nectars_data(user_id):
-    """Получает данные о нектарах пользователя."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT active_nectar, nectars_inv, strength_charges FROM users WHERE user_id = ?", (user_id,))
         row = await cursor.fetchone()
-        if row:
-            return {
-                "active_nectar": row["active_nectar"],
-                "nectars_inv": json.loads(row["nectars_inv"] or "{}"),
-                "strength_charges": row["strength_charges"]
-            }
+        if row: return {"active_nectar": row["active_nectar"], "nectars_inv": json.loads(row["nectars_inv"] or "{}"), "strength_charges": row["strength_charges"]}
         return {"active_nectar": None, "nectars_inv": {}, "strength_charges": 0}
 
 async def update_nectars_data(user_id, active_nectar=False, nectars_inv=None, strength_charges=None):
-    """Обновляет данные экипировки и инвентаря нектаров."""
     async with aiosqlite.connect(DB_PATH) as db:
         updates = []
         params = []
-        # Если active_nectar равен False, бот пропустит этот шаг и не сбросит твою экипировку!
         if active_nectar is not False: 
             updates.append("active_nectar = ?")
             params.append(active_nectar)
@@ -501,7 +405,6 @@ async def update_nectars_data(user_id, active_nectar=False, nectars_inv=None, st
             await db.commit()
 
 def try_spend_stone(user_id, color, level, count):
-    """Списывает камни для крафта нектаров."""
     with closing(get_conn()) as conn, conn:
         cursor = conn.execute("SELECT count FROM stones WHERE user_id = ? AND color = ? AND level = ?", (user_id, color, level))
         row = cursor.fetchone()
@@ -511,7 +414,6 @@ def try_spend_stone(user_id, color, level, count):
         return False
 
 def try_spend_resource(user_id, resource_key, count):
-    """Проверяет наличие ресурса и списывает его."""
     with closing(get_conn()) as conn, conn:
         cursor = conn.execute("SELECT count FROM resources WHERE user_id = ? AND key = ?", (user_id, resource_key))
         row = cursor.fetchone()
