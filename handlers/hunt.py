@@ -166,7 +166,7 @@ async def perform_search(message: Message, state: FSMContext):
         
     user = await database.run_async(database.get_user, user_id)
     nectars_db = await database.get_nectars_data(user_id)
-    nectars_db["combat_effects"] = {} # Эффекты текущего боя
+    nectars_db["combat_effects"] = {} 
     
     redis_client = state.storage.redis
     buffered_meters = await redis_client.hget(f"user_buffer:{user_id}", "cur_meters")
@@ -202,7 +202,8 @@ async def perform_search(message: Message, state: FSMContext):
     await state.update_data(
         cur_hp=healed_hp, stats=stats, specials=list(get_equipped_special_effects(mutations)),
         crab_type=crab_type, cur_meters=user["cur_meters"], max_meters=user["max_meters"],
-        monster=monster, abilities=_get_abilities(monster), battle_message_id=sent.message_id, nectars=nectars_db
+        monster=monster, abilities=_get_abilities(monster), battle_message_id=sent.message_id, nectars=nectars_db,
+        last_action_time=0.0 # Инициализируем таймер анти-спама
     )
 
 @router.message(StateFilter(Nav.hunt, Nav.main, None), F.text.contains("Рыскать по дну"))
@@ -415,6 +416,20 @@ async def attack(call: CallbackQuery, state: FSMContext):
         except TelegramBadRequest: pass
         return
     fsm_data, is_camp, target = ctx
+    
+    # === ДОБАВЛЕНА АНТИ-СПАМ ЗАЩИТА ===
+    now = time.time()
+    last_action = fsm_data.get("last_action_time", 0)
+    if now - last_action < 0.7:  # Кулдаун между кликами 0.7 секунды
+        try: await call.answer("⏳ Не так быстро!", show_alert=False)
+        except TelegramBadRequest: pass
+        return
+    
+    # Обновляем таймер в FSM напрямую
+    fsm_data["last_action_time"] = now
+    await state.update_data(last_action_time=now)
+    # ==================================
+    
     try: await call.answer()
     except TelegramBadRequest: pass
 
@@ -455,6 +470,17 @@ async def drink_nectar(call: CallbackQuery, state: FSMContext):
         except TelegramBadRequest: pass
         return
     fsm_data, is_camp, target = ctx
+    
+    # === ДОБАВЛЕНА АНТИ-СПАМ ЗАЩИТА ===
+    now = time.time()
+    if now - fsm_data.get("last_action_time", 0) < 0.7:
+        try: await call.answer("⏳ Не так быстро!", show_alert=False)
+        except TelegramBadRequest: pass
+        return
+    fsm_data["last_action_time"] = now
+    await state.update_data(last_action_time=now)
+    # ==================================
+    
     nectars = fsm_data["nectars"]
     active = nectars["active_nectar"]
     inv = nectars["nectars_inv"]
@@ -509,6 +535,17 @@ async def ability_shield(call: CallbackQuery, state: FSMContext):
     ctx = await _load_battle_context(call.from_user.id, state)
     if not ctx: return
     fsm_data, is_camp, target = ctx
+    
+    # === ДОБАВЛЕНА АНТИ-СПАМ ЗАЩИТА ===
+    now = time.time()
+    if now - fsm_data.get("last_action_time", 0) < 0.7:
+        try: await call.answer("⏳ Не так быстро!", show_alert=False)
+        except TelegramBadRequest: pass
+        return
+    fsm_data["last_action_time"] = now
+    await state.update_data(last_action_time=now)
+    # ==================================
+    
     if target.get("is_boss") or fsm_data["abilities"]["shield_cooldown"] > 0:
         try: await call.answer("Недоступно!", show_alert=True)
         except TelegramBadRequest: pass
@@ -528,6 +565,17 @@ async def ability_unique(call: CallbackQuery, state: FSMContext):
     ctx = await _load_battle_context(call.from_user.id, state)
     if not ctx: return
     fsm_data, is_camp, target = ctx
+    
+    # === ДОБАВЛЕНА АНТИ-СПАМ ЗАЩИТА ===
+    now = time.time()
+    if now - fsm_data.get("last_action_time", 0) < 0.7:
+        try: await call.answer("⏳ Не так быстро!", show_alert=False)
+        except TelegramBadRequest: pass
+        return
+    fsm_data["last_action_time"] = now
+    await state.update_data(last_action_time=now)
+    # ==================================
+    
     if target.get("is_boss") or fsm_data["abilities"]["unique_used"]:
         try: await call.answer("Недоступно!", show_alert=True)
         except TelegramBadRequest: pass
