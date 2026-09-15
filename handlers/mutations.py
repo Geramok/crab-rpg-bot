@@ -295,6 +295,7 @@ async def open_event_chest(call: CallbackQuery):
     chest_type = int(chest_type_raw) if chest_type_raw.isdigit() else chest_type_raw
     user_id = call.from_user.id
     
+    # 1. Сначала быстро проверяем, есть ли сундук
     has_chest = await database.run_async(database.try_spend_chest, user_id, chest_type, 1)
     if not has_chest:
         await call.answer("У тебя нет этого сундука или он уже открыт!", show_alert=True)
@@ -304,6 +305,13 @@ async def open_event_chest(call: CallbackQuery):
             pass
         return
         
+    # 2. Сундук есть! СРАЗУ отвечаем Телеграму, чтобы кнопка не зависла и не выдала ошибку
+    try:
+        await call.answer("Открываем сундук...")
+    except Exception:
+        pass
+        
+    # 3. Теперь спокойно, без спешки, крутим рулетку и обращаемся к базе
     owned_mutations = await database.run_async(database.get_mutations_v2, user_id)
     owned_keys = [m["variant_key"] for m in owned_mutations]
     
@@ -340,5 +348,6 @@ async def open_event_chest(call: CallbackQuery):
         f"{mut_text}"
     )
     
+    # 4. Выводим результат (кнопка уже отвечена, так что ошибки не будет)
     await call.message.edit_text(final_text)
     await call.answer()
