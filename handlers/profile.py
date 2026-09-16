@@ -91,6 +91,12 @@ async def _characteristics_text_and_kb(user_id):
                     
     mutations_txt = ", ".join(mutation_names) if mutation_names else "нет"
 
+    # ДОБАВЛЕНО: Считываем и выводим Древо Эволюции
+    try: tree = json.loads(user.get("evolution_tree", "[]"))
+    except: tree = []
+    evo_names = [EVOLUTION_NODES[k]["name"] for k in tree if k in EVOLUTION_NODES]
+    evo_txt = ", ".join(evo_names) if evo_names else "нет"
+
     unique = UNIQUE_ABILITIES.get(user["crab_type"], UNIQUE_ABILITIES[1])
     abilities_txt = f"{SHIELD_ABILITY['name']}, {MARK_ABILITY['name']}"
     
@@ -102,7 +108,8 @@ async def _characteristics_text_and_kb(user_id):
         f"⚔️{stats['damage']:.1f} 🌊{stats['evasion']:.0f}% 🍀{stats['luck']:.0f}% "
         f"🎯{stats['crit_chance']:.0f}% 💥{stats['crit_damage']:.0f}% ❤️{format_number(int(stats['max_hp']))}\n\n"
         f"🧬 Пассивных мутаций: {passive_count}/27\n"
-        f"🌟 Экипировано: {mutations_txt}\n\n"
+        f"🌟 Экипировано: {mutations_txt}\n"
+        f"🧬 Эволюция: {evo_txt}\n\n"
         f"Способности: {abilities_txt}\n"
         f"Твоя уникальная: {unique['name']} — {unique['desc']}\n\n"
         f"💰 Твой баланс: {format_number(user['gold'])} 💰"
@@ -120,7 +127,7 @@ async def _characteristics_text_and_kb(user_id):
         
     ikb = InlineKeyboardMarkup(inline_keyboard=buttons)
     return text, ikb
-
+    
 async def show_characteristics(message: Message):
     text, ikb = await _characteristics_text_and_kb(message.from_user.id)
     await message.answer(text, reply_markup=kb([BACK]))
