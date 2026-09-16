@@ -216,10 +216,22 @@ async def show_passive_detail(call: CallbackQuery):
         f"<b>{variant['name']}</b> (Ур. {m['level']})\nТип: Пассивная\n\n"
         f"🛡 <b>Базовый эффект:</b> (Для всех)\n"
     )
-    for st, val in variant.get("base_buff", {}).items(): text += f"• +{val * m['level']:.1f} к {st}\n"
+    for st, val in variant.get("base_buff", {}).items(): 
+        clean_st = st.replace("mult_", "").replace("flat_", "")
+        st_name = STAT_LABELS.get(clean_st, clean_st)
+        if st.startswith("mult_"):
+            text += f"• +{val * m['level'] * 100:.1f}% к {st_name}\n"
+        else:
+            text += f"• +{val * m['level']:.1f} к {st_name}\n"
     
     text += f"\n💎 <b>Синергия:</b> (Только для кристалла {variant['crystal']})\n"
-    for st, val in variant.get("synergy_buff", {}).items(): text += f"• +{val * m['level']:.3f} к {st}\n"
+    for st, val in variant.get("synergy_buff", {}).items(): 
+        clean_st = st.replace("mult_", "").replace("flat_", "")
+        st_name = STAT_LABELS.get(clean_st, clean_st)
+        if st.startswith("mult_"):
+            text += f"• +{val * m['level'] * 100:.1f}% к {st_name}\n"
+        else:
+            text += f"• +{val * m['level']:.1f} к {st_name}\n"
     
     text += f"\n💰 ДНК: {format_number(user['dna_points'])} 🧬"
     
@@ -241,7 +253,10 @@ async def show_active_detail(call: CallbackQuery):
     
     text = f"<b>{variant['name']}</b> (Ур. {m['level']})\nСлот: {MUTATION_SLOT_NAMES[variant['slot']]}\n\n"
     text += f"📉 <b>Дебафф (Штраф):</b>\n"
-    for st, val in variant.get("debuff", {}).items(): text += f"• -{val * 100:.0f}% к {st}\n"
+    for st, val in variant.get("debuff", {}).items(): 
+        clean_st = st.replace("mult_", "").replace("flat_", "")
+        st_name = STAT_LABELS.get(clean_st, clean_st)
+        text += f"• -{val * 100:.0f}% к {st_name}\n"
     
     text += f"\n✨ <b>Способность:</b>\n{variant['desc']}\n\n💰 ДНК: {format_number(user['dna_points'])} 🧬"
     
@@ -253,7 +268,6 @@ async def show_active_detail(call: CallbackQuery):
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="open_actives")]
     ])
     await call.message.edit_text(text, reply_markup=ikb)
-
 @router.callback_query(F.data.startswith("equip_act_"))
 async def equip_act(call: CallbackQuery):
     key = call.data.replace("equip_act_", "")
