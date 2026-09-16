@@ -273,6 +273,9 @@ async def equip_act(call: CallbackQuery):
     key = call.data.replace("equip_act_", "")
     await database.run_async(database.equip_active_mutation, call.from_user.id, key)
     await call.answer("Надето!")
+    
+    # Подменяем данные, чтобы функция отрисовки поняла, какую мутацию показывать
+    call.data = f"mut_act_det_{key}"
     await show_active_detail(call)
 
 @router.callback_query(F.data.startswith("unequip_act_"))
@@ -280,6 +283,9 @@ async def unequip_act(call: CallbackQuery):
     key = call.data.replace("unequip_act_", "")
     await database.run_async(database.unequip_active_mutation, call.from_user.id, key)
     await call.answer("Снято!")
+    
+    # Подменяем данные, чтобы функция отрисовки поняла, какую мутацию показывать
+    call.data = f"mut_act_det_{key}"
     await show_active_detail(call)
 
 @router.callback_query(F.data.startswith("upg_pass_"))
