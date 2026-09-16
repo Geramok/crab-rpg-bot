@@ -241,9 +241,8 @@ async def show_passive_detail(call: CallbackQuery):
     ])
     await call.message.edit_text(text, reply_markup=ikb)
 
-@router.callback_query(F.data.startswith("mut_act_det_"))
-async def show_active_detail(call: CallbackQuery):
-    variant_key = call.data.replace("mut_act_det_", "")
+# --- Внутренняя функция отрисовки (чтобы больше не было ошибок с ключами) ---
+async def _render_active_detail(call: CallbackQuery, variant_key: str):
     user = await database.run_async(database.get_user, call.from_user.id)
     owned = await database.run_async(database.get_user_mutations_v3, call.from_user.id)
     m = next((x for x in owned if x["variant_key"] == variant_key), None)
@@ -268,15 +267,26 @@ async def show_active_detail(call: CallbackQuery):
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="open_actives")]
     ])
     await call.message.edit_text(text, reply_markup=ikb)
+
+# --- Обработчики нажатий ---
+@router.callback_query(F.data.startswith("mut_act_det_"))
+async def show_active_detail(call: CallbackQuery):
+    variant_key = call.data.replace("mut_act_det_", "")
+    await _render_active_detail(call, variant_key)
+
 @router.callback_query(F.data.startswith("equip_act_"))
 async def equip_act(call: CallbackQuery):
     key = call.data.replace("equip_act_", "")
     await database.run_async(database.equip_active_mutation, call.from_user.id, key)
     await call.answer("Надето!")
-    
-    # Подменяем данные, чтобы функция отрисовки поняла, какую мутацию показывать
-    call.data = f"mut_act_det_{key}"
-    await show_active_detail(call)
+    await _render_active_detail(call, key)
+
+@router.callback_query(F.data.startswith("unequip_act_"))
+async def unequip_act(call: CallbackQuery):
+    key = call.data.replace("unequip_act_", "")
+    await database.run_async(database.unequip_active_mutation, call.from_user.id, key)
+    await call.answer("Снято!")
+    await _render_active_detail(call, key)
 
 @router.callback_query(F.data.startswith("unequip_act_"))
 async def unequip_act(call: CallbackQuery):
