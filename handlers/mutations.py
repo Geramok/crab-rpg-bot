@@ -4,6 +4,7 @@ import random
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramBadRequest
 
 import database
 from data import MUTATION_SLOT_NAMES, STAT_LABELS, PASSIVE_MUTATIONS, ACTIVE_MUTATIONS, STONE_COLORS
@@ -278,14 +279,25 @@ async def show_active_detail(call: CallbackQuery):
 async def equip_act(call: CallbackQuery):
     key = call.data.replace("equip_act_", "")
     await database.run_async(database.equip_active_mutation, call.from_user.id, key)
-    await call.answer("Надето!")
+    
+    # Пытаемся ответить телеграму. Если время вышло - просто игнорируем ошибку.
+    try:
+        await call.answer("Надето!")
+    except TelegramBadRequest:
+        pass
+        
     await _render_active_detail(call, key)
 
 @router.callback_query(F.data.startswith("unequip_act_"))
 async def unequip_act(call: CallbackQuery):
     key = call.data.replace("unequip_act_", "")
     await database.run_async(database.unequip_active_mutation, call.from_user.id, key)
-    await call.answer("Снято!")
+    
+    try:
+        await call.answer("Снято!")
+    except TelegramBadRequest:
+        pass
+        
     await _render_active_detail(call, key)
 
 @router.callback_query(F.data.startswith("unequip_act_"))
